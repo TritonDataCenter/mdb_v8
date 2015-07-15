@@ -2234,13 +2234,13 @@ jsobj_properties(uintptr_t addr,
 			 */
 			unsigned int bf3_value;
 			if (mdb_vread(&bf3_value, sizeof (bf3_value),
-				map + V8_OFF_MAP_BIT_FIELD3) == -1)
+			    map + V8_OFF_MAP_BIT_FIELD3) == -1)
 				goto err;
 			bit_field3 = (uintptr_t)bf3_value;
 		} else {
 			/* The metadata indicates this is an SMI. */
 			if (mdb_vread(&bit_field3, sizeof (bit_field3),
-				map + V8_OFF_MAP_BIT_FIELD3) == -1)
+			    map + V8_OFF_MAP_BIT_FIELD3) == -1)
 					goto err;
 			bit_field3 = V8_SMI_VALUE(bit_field3);
 		}

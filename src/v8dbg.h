@@ -43,8 +43,8 @@
  */
 #define	V8_IS_SMI(ptr)		(((ptr) & V8_SmiTagMask) == V8_SmiTag)
 #define	V8_IS_FAILURE(ptr)	(V8_FailureTagMask != -1 && \
- V8_FailureTagMask != -1 && \
- ((ptr) & V8_FailureTagMask) == V8_FailureTag)
+	V8_FailureTagMask != -1 && \
+	((ptr) & V8_FailureTagMask) == V8_FailureTag)
 
 #define	V8_IS_HEAPOBJECT(ptr)	\
 	(((ptr) & V8_HeapObjectTagMask) == V8_HeapObjectTag)
