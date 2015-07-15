@@ -10,6 +10,8 @@
 #
 #     all	builds the mdb_v8.so shared object
 #
+#     check	run style checker on source files
+#
 #     clean	removes all generated files
 #
 
@@ -20,10 +22,16 @@
 # Directory for output objects
 MDBV8_BUILD	 = build
 
-# List of sources files (not including "src/" directory prefix)
+#
+# List of source files that will become objects.  (These values do not include
+# the "src/" directory prefix.)
+#
 MDBV8_SOURCES	 =	\
 		    mdb_v8.c		\
 		    mdb_v8_cfg.c
+
+# List of source files to run through cstyle.  This includes header files.
+MDBV8_CSTYLE_SOURCES = $(wildcard src/*.c src/*.h)
 
 # Compiler flags
 CFLAGS		+= -Werror -Wall -Wextra -fno-omit-frame-pointer
@@ -39,6 +47,10 @@ LDFLAGS		+= -lproc -lavl
 # Output object name
 MDBV8_DYLIB	 = $(MDBV8_BUILD)/mdb_v8.so
 
+# Path to cstyle.pl tool
+CSTYLE		 = tools/cstyle.pl
+CSTYLE_FLAGS	+= -cCp
+
 
 #
 # DEFINITIONS
@@ -51,6 +63,10 @@ MDBV8_OBJECTS	 = $(MDBV8_SOURCES:%.c=$(MDBV8_BUILD)/%.o)
 #
 .PHONY: all
 all: $(MDBV8_DYLIB)
+
+.PHONY: check
+check:
+	$(CSTYLE) $(CSTYLE_FLAGS) $(MDBV8_CSTYLE_SOURCES)
 
 .PHONY: clean
 clean:
