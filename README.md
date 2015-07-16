@@ -2,30 +2,69 @@
 
 This repository contains the canonical source for mdb\_v8, an
 [mdb](http://illumos.org/man/1/mdb) debugger module ("dmod") for debugging both
-live processes and core dumps of programs using Google's
-[V8 JavaScript engine](https://developers.google.com/v8/), and particularly
+live processes and core dumps of programs using Google's [V8 JavaScript
+engine](https://developers.google.com/v8/), and particularly
 [Node.js](https://nodejs.org/).
 
 **For information about using these tools, see the [usage
 guide](docs/usage.md).**
 
+Downstream versions of mdb\_v8 exist in both Node.js and SmartOS.  See
+[CHANGES.md](CHANGES.md) for details.
 
-## Building and using mdb_v8
+
+## Building from source
 
 You can build mdb\_v8 by cloning this repository and running `make`.  It will
 only build and run on illumos-based systems.  See the [usage
 guide](docs/usage.md) for details on system support.
 
 
+## Binary downloads
+
+Binaries for mdb\_v8 can be found at
+https://us-east.manta.joyent.com/Joyent_Dev/public/mdb_v8.  If you have the
+[Manta command-line tools](https://www.npmjs.com/package/manta) installed, you
+can list the latest binaries with:
+
+    $ mfind -t o $(mget -q /Joyent_Dev/public/mdb_v8/latest)
+    /Joyent_Dev/public/mdb_v8/v0.9.0/mdb_v8_amd64.so
+    /Joyent_Dev/public/mdb_v8/v0.9.0/mdb_v8_ia32.s
+
+You can fetch a given binary with:
+
+    $ mget -O /Joyent_Dev/public/mdb_v8/v0.9.0/mdb_v8_ia32.so
+
+or using curl:
+
+    $ curl -O https://us-east.manta.joyent.com/Joyent_Dev/public/mdb_v8/v0.9.0/mdb_v8_ia32.so
+
+This one-liner will get you the latest 32-bit binary:
+
+    $ mget -O $(mget -q /Joyent_Dev/public/mdb_v8/latest)/mdb_v8_ia32.so
+
+
 ## Contributing
 
-All code changes should be "make check" clean.
+Contributions welcome, but please help us review your changes (and keep code
+quality high) by following these guidelines.  **If you have any questions, feel
+free to ask.**  Don't let these guidelines be a barrier to contributing!
 
-New commands, walkers, and non-private options must have associated
-documentation, both in the dmod (so that "::help DCMD" works) and in the usage
-guide.
+If you're not sure exactly what change you want to make, create an issue to
+discuss it.  Once you've got a change ready to integrate, submit a pull request.
 
-Major changes should be tested on:
+**Formatting nits**: Pull requests should include text explaining the suggested
+change.  (Do not put this text in the commit message.  The commit message should
+consist of one line per logical change, each consisting of the issue number and
+synopsis.  See previous commit messages for examples.)
+
+**Completeness:** Pull requests should include relevant updates to the
+documentation, including CHANGES.md.  New commands, walkers, and non-private
+options must have associated documentation, both in the dmod (so that "::help
+DCMD" works) and in the usage guide.
+
+**Testing**: Code changes should be "make check" clean.  Major changes should be
+tested on:
 
 - core files from each of the two latest major release of Node
   (e.g., Node v0.12 and Node v0.10)
@@ -35,29 +74,6 @@ Major changes should be tested on:
 
 There's a limited test suite that has not yet been incorporated into this repo.
 Contact the authors for information about running it.
-
-
-## History of mdb_v8
-
-The canonical source for mdb\_v8 has moved between several repositories.  To
-avoid confusion between different versions, here's the history:
-
-* 2011-12-16: mdb\_v8 is initially [integrated](https://github.com/joyent/illumos-joyent/commit/48f2bcac10415ae79c34b6e8d8870a135b57a6c9)
-  into the [SmartOS](https://smartos.org/) distribution of the
-  [illumos](https://www.illumos.org/) operating system.
-* 2013-07-17: mdb\_v8 is copied into the Node repository so that the dmod can
-  be built into Node binary.  At this point, the canonical copy lives in the
-  Node repo, but SmartOS continues to deliver its own copy.  The #master version
-  of both copies is identical except for the license, and subsequent changes are
-  applied to both versions.
-* 2015-07-14: mdb\_v8 is copied into this repository to allow for its own
-  documentation and test suite and to streamline development.  The copies in
-  both Node and SmartOS are considered downstream.  Changes should be made to
-  this copy first, then propagated into these copies.
-
-The initial commit in this repository represents the copy of mdb\_v8 in illumos
-at the time of the commit, which is equivalent to the copy of mdb\_v8 in Node
-v0.12.7 except for the license and cstyle-related changes.
 
 
 ## See also
