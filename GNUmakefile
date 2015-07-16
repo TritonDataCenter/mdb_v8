@@ -26,9 +26,10 @@
 
 # Directory for output objects
 MDBV8_BUILD	 = build
-
 # Output object name
 MDBV8_SONAME	 = mdb_v8.so
+# Tag binaries with "dev" or "release".  This should be a valid C string.
+MDBV8_VERS_TAG	 = "dev"
 
 
 #
@@ -46,6 +47,7 @@ MDBV8_CSTYLE_SOURCES	 = $(wildcard src/*.c src/*.h)
 
 # Compiler flags
 CFLAGS			+= -Werror -Wall -Wextra -fPIC -fno-omit-frame-pointer
+CPPFLAGS		+= -DMDBV8_VERS_TAG='$(MDBV8_VERS_TAG)'
 # XXX These should be removed.
 CFLAGS			+= -Wno-unused-parameter		\
 			   -Wno-missing-field-initializers	\
@@ -77,6 +79,8 @@ $(MDBV8_TARGETS_amd64):	SOFLAGS	+= -m64
 MKDIRP		 = mkdir -p $@
 COMPILE.c	 = $(CC) -o $@ -c $(CFLAGS) $(CPPFLAGS) $^
 MAKESO	 	 = $(CC) -o $@ -shared $(SOFLAGS) $(LDFLAGS) $^
+GITDESCRIBE	 = $(shell git describe --all --long --dirty | \
+    awk -F'-g' '{print $$NF}')
 
 #
 # TARGETS
@@ -91,6 +95,10 @@ check:
 .PHONY: clean
 clean:
 	-rm -rf $(MDBV8_BUILD)
+
+.PHONY: release
+release: MDBV8_VERS_TAG := "release, from $(GITDESCRIBE)"
+release: clean $(MDBV8_ALLTARGETS)
 
 #
 # Makefile.arch.targ is parametrized by MDBV8_ARCH.  It defines a group of
