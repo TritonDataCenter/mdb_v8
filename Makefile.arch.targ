@@ -5,15 +5,22 @@
 #
 # Makefile.arch.targ: this Makefile contains targets that will be sourced twice:
 # once for each architecture (ia32 and amd64).  This avoids duplicating a bunch
-# of definitions and recipes that are otherwise identical.
+# of recipes that are otherwise identical.
+#
+# We're able to use the exact same recipe for both 32-bit and 64-bit targets
+# because the recipe makes use of target-specific variables that will change the
+# command-line as needed.  Specifically, CFLAGS and SOFLAGS will change based on
+# the architecture, so as long as we use those variables (or other variables
+# that use them), we don't need to do anything differently for the two
+# architectures.
 #
 
 $(MDBV8_OBJECTS_$(MDBV8_ARCH)): \
     $(MDBV8_BUILD_$(MDBV8_ARCH))/%.o: src/%.c | $(MDBV8_BUILD_$(MDBV8_ARCH))
-	$(COMPILE_$(MDBV8_ARCH).c)
+	$(COMPILE.c)
 
 $(MDBV8_DYLIB_$(MDBV8_ARCH)): $(MDBV8_OBJECTS_$(MDBV8_ARCH))
-	$(MAKESO_$(MDBV8_ARCH))
+	$(MAKESO)
 
 $(MDBV8_BUILD_$(MDBV8_ARCH)):
 	$(MKDIRP)

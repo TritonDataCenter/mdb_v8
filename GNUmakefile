@@ -16,10 +16,9 @@
 #
 # This Makefile has been designed to work out of the box (without manual or
 # automatic configuration) on illumos systems.  Other systems do not support
-# MDB, so the build will not work there.  You can in principle configure most of
-# the items under the CONFIGURATION sections, but you should not need to.
+# MDB, so the build will not work there.  In principle, you can change most
+# of the items under the CONFIGURATION sections, but you should not need to.
 #
-
 
 #
 # CONFIGURATION FOR BUILDERS
@@ -47,7 +46,6 @@ MDBV8_CSTYLE_SOURCES	 = $(wildcard src/*.c src/*.h)
 
 # Compiler flags
 CFLAGS			+= -Werror -Wall -Wextra -fPIC -fno-omit-frame-pointer
-
 # XXX These should be removed.
 CFLAGS			+= -Wno-unused-parameter		\
 			   -Wno-missing-field-initializers	\
@@ -70,16 +68,15 @@ include Makefile.arch.defs
 MDBV8_ARCH = amd64
 include Makefile.arch.defs
 
+$(MDBV8_TARGETS_amd64):	CFLAGS	+= -m64
+$(MDBV8_TARGETS_amd64):	SOFLAGS	+= -m64
 
 #
 # DEFINITIONS USED AS RECIPES
 #
 MKDIRP		 = mkdir -p $@
-COMPILE_ia32.c	 = $(CC) -o $@ -c $(CFLAGS) $(CPPFLAGS) $^
-COMPILE_amd64.c	 = $(CC) -o $@ -c -m64 $(CFLAGS) $(CPPFLAGS) $^
-MAKESO_ia32	 = $(CC) -o $@ -shared $(SOFLAGS) $(LDFLAGS) $^
-MAKESO_amd64	 = $(CC) -o $@ -m64 -shared $(SOFLAGS) $(LDFLAGS) $^
-
+COMPILE.c	 = $(CC) -o $@ -c $(CFLAGS) $(CPPFLAGS) $^
+MAKESO	 	 = $(CC) -o $@ -shared $(SOFLAGS) $(LDFLAGS) $^
 
 #
 # TARGETS
@@ -96,16 +93,14 @@ clean:
 	-rm -rf $(MDBV8_BUILD)
 
 #
-# This is a little janky, but there are two pieces here: We include
-# Makefile.arch.targ twice: once to define the ia32 targets and once to define
-# the amd64 targets.  Those targets also use MDBV8_ARCH in their recipes, and
-# those are evaluated lazily, so we must _also_ define target-specific values
-# fro MDBV8_ARCH.
+# Makefile.arch.targ is parametrized by MDBV8_ARCH.  It defines a group of
+# the current value of MDBV8_ARCH.  When we include it the first time, it
+# defines targets for the 32-bit object files and shared object file.  The
+# second time, it defines targets for the 64-bit object files and shared object
+# file.  This avoids duplicating Makefile snippets, though admittedly today
+# these snippets are short enough that it hardly makes much difference.
 #
 MDBV8_ARCH=ia32
 include Makefile.arch.targ
 MDBV8_ARCH=amd64
 include Makefile.arch.targ
-
-$(MDBV8_DYLIB_ia32)  $(MDBV8_OBJECTS_ia32):  MDBV8_ARCH = ia32
-$(MDBV8_DYLIB_amd64) $(MDBV8_OBJECTS_amd64): MDBV8_ARCH = amd64

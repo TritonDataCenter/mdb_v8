@@ -5,16 +5,24 @@
 #
 # Makefile.arch.defs: this Makefile contains definitions that will be sourced
 # twice: once for each architecture (ia32 and amd64).  This avoids duplicating a
-# bunch of definitions and recipes that are otherwise identical.
+# bunch of definitions that are otherwise identical.
 #
 # These definitions must be immediate rather than lazy (":=" rather than "=")
-# because MDBV8_ARCH will change after this file is included.
+# because values on the right hand side (notably MDBV8_ARCH) may change after
+# this file is included, and we want to bind to their current values.
 #
 
+# Architecture-specific build directory
 MDBV8_BUILD_$(MDBV8_ARCH)	:= $(MDBV8_BUILD)/$(MDBV8_ARCH)
+# Path to architecture-specific shared object file
 MDBV8_DYLIB_$(MDBV8_ARCH)	:= $(MDBV8_BUILD_$(MDBV8_ARCH))/$(MDBV8_SONAME)
+# List of full paths to architecture-specific object files
 MDBV8_OBJECTS_$(MDBV8_ARCH)	:= \
     $(MDBV8_SOURCES:%.c=$(MDBV8_BUILD_$(MDBV8_ARCH))/%.o)
 
+# List of architecture-specific targets (for defining target-specific variables)
+MDBV8_TARGETS_$(MDBV8_ARCH)	:= \
+    $(MDBV8_DYLIB_$(MDBV8_ARCH)) MDBV8_OBJECTS_$(MDBV8_ARCH)
+# Append this shared object to the list of "all" targets
 MDBV8_ALLTARGETS		:= \
     $(MDBV8_ALLTARGETS) $(MDBV8_DYLIB_$(MDBV8_ARCH))
