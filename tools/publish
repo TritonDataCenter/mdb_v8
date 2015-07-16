@@ -1,0 +1,222 @@
+#!/bin/bash
+
+#
+# publish: publish a new version of mdb_v8.  This does a few local sanity
+# checks, creates a git tag for the current version, and uploads bits to Manta.
+# To publish a new version, run:
+#
+#     $ git status		# check that working tree is not dirty
+#     $ make release		# makes "clean" first, then "all"
+#     $ ./tools/publish		# sanity checks, git tags, upload
+#     				# use "-l" option if this is a new latest
+#     				# release.
+#
+# Then follow the suggested steps output by the above script.
+#
+
+arg0="$(basename ${BASH_SOURCE[0]})"
+p_root="/Joyent_Dev/public/mdb_v8"
+p_latest=false
+p_version=
+p_dir=
+
+function usage
+{
+	[[ -n "$@" ]] && echo "$arg0: $@" >&2
+	cat >&2 <<-EOF
+usage: $arg0 [-fl]
+
+Publishes the currently built version of mdb_v8 to Manta.
+EOF
+	exit 2
+}
+
+function fail
+{
+	echo "$arg0: $@" >&2
+	exit 1
+}
+
+#
+# confirm MESSAGE: prompt the user with MESSAGE and returns success only if
+# they reply with "y" or "Y".
+#
+function confirm
+{
+        # Prompt the user with the message we were given.
+        read -p "$@" -n 1
+
+        # Print a newline, regardless of what they typed.
+        echo
+
+        # Return success iff the user typed "y" or "Y".
+        [[ $REPLY =~ ^[Yy]$ ]]
+}
+
+function main
+{
+	while getopts ":l" c "$@"; do
+		case "$c" in
+		l)	p_latest=true ;;
+		:)	usage "option requires an argument -- $OPTARG" ;;
+		*)	usage "invalid option: $OPTARG" ;;
+		esac
+	done
+
+	cd "$(dirname "${BASH_SOURCE[0]}")/.." || fail "failed to cd"
+
+	echo -n "Checking for local copy of Manta tools ... "
+	if ! type "mls" > /dev/null 2>&1; then
+		fail "mls(1) not found"
+	fi
+	echo "okay."
+
+	pub_load_version
+	pub_sanity_check
+
+	if ! pub_create_tag; then
+		confirm "Failed to apply tag.  Continue? " || \
+		    fail "aborted by user"
+	fi
+
+	if pub_exists_upstream; then
+		confirm "Overwrite published version? " || \
+		    fail "aborted by user"
+	fi
+
+	pub_publish
+
+	if [[ "$p_latest" == "true" ]]; then
+		pub_update_latest
+		echo "Done."
+	else
+		echo -n "Done.  "
+		echo "Did not update \"latest\" link (use -l to do that)."
+	fi
+
+	echo ""
+	echo "Suggested next steps:"
+	echo "    - push new tag using \"git push --tags\""
+	echo "    - make \"clean\" to avoid re-publishing release bits"
+	echo "    - update \"version\" file for next development version"
+	echo "    - commit that change and push it upstream"
+}
+
+#
+# Load into p_version the semver version number (e.g., "1.2.3").
+#
+function pub_load_version
+{
+	echo -n "Loading version number ... "
+	p_version="$(grep -v '^#' version | head -1)"
+	[[ -n "$p_version" ]] || fail "failed to read version"
+	echo "$p_version."
+	p_dir="$p_root/v$p_version"
+}
+
+#
+# Run pre-publish sanity checks on the built binaries.
+#
+function pub_sanity_check
+{
+	pub_sanity_check_file build/ia32/mdb_v8.so
+	pub_sanity_check_file build/amd64/mdb_v8.so
+}
+
+function pub_sanity_check_file
+{
+	local file tmpfile pid i tag
+
+	file="$1"
+	echo -n "Checking for $file ... "
+	if [[ ! -f "$file" ]]; then
+		fail "not found"
+	else
+		echo "done."
+	fi
+
+	#
+	# This is incredibly circuitous (not to mention lame), but we want to
+	# try to pull a specific string out of the binary, which is not all that
+	# easy to do.
+	#
+	tmpfile=/var/tmp/mdbv8publish.$$
+	rm -f /var/tmp/mdbv8publish.$$
+	echo -n "Checking for release tag on "$file" ... "
+	mdb -e '::load '"$file"'; !touch '"$tmpfile"'; ! sleep 300' \
+	    "$file" > /dev/null 2>&1 &
+	pid="$!"
+	for (( i = 0; i < 30; i++ )) {
+		if [[ -f "$tmpfile" ]]; then
+			break
+		fi
+
+		sleep 1
+	}
+	[[ -f "$tmpfile" ]] || fail "failed"
+	rm -f "$tmpfile"
+	tag="$(mdb -p "$pid" -e '*mdbv8_vers_tag/s' | awk '{print $2}' |
+	    sed -e s'#,##g')"
+	kill "$pid" > /dev/null 2>&1
+	echo "\"$tag\""
+	if [[ "$tag" != "release" ]]; then
+		fail "does not appear to be a release build (tag "\"$tag\"")"
+	fi
+}
+
+#
+# Create a git tag for the current version.
+#
+function pub_create_tag
+{
+	echo -n "Creating git tag \"v$p_version\" ... "
+	if ! git tag -a "v$p_version" -m "v$p_version"; then
+		return 1
+	fi
+	echo "done."
+}
+
+#
+# Check whether the given release exists upstream.
+#
+function pub_exists_upstream
+{
+	local mls output
+
+	echo -n "Listing upstream versions ... "
+	output="$(mls -j "$p_root" | json -ga name)" || \
+	    fail "failed to list upstream versions"
+	echo "done."
+
+	echo -n "Checking whether $p_version already exists ... "
+	if echo "$output" | grep "^v$p_version\$" > /dev/null 2>&1; then
+		echo "yes"
+		return 0
+	else
+		echo "no"
+		return 1
+	fi
+}
+
+#
+# Upload the bits to Manta.
+#
+function pub_publish
+{
+	echo -n "Uploading bits to Manta ... "
+	if ! mmkdir -p "$p_dir" || \
+	   ! mput -f build/ia32/mdb_v8.so "$p_dir/mdb_v8_ia32.so" || \
+	   ! mput -f build/amd64/mdb_v8.so "$p_dir/mdb_v8_amd64.so"; then
+	   	fail "failed"
+	fi
+}
+
+#
+# Update the "latest" links in Manta.
+#
+function pub_update_latest
+{
+	echo "$p_dir" | mput "$p_root/latest"
+}
+
+main "$@"
