@@ -1,0 +1,19 @@
+#
+# Copyright (c) 2015, Joyent, Inc.
+#
+
+#
+# Makefile.arch.targ: this Makefile contains targets that will be sourced twice:
+# once for each architecture (ia32 and amd64).  This avoids duplicating a bunch
+# of definitions and recipes that are otherwise identical.
+#
+
+$(MDBV8_OBJECTS_$(MDBV8_ARCH)): \
+    $(MDBV8_BUILD_$(MDBV8_ARCH))/%.o: src/%.c | $(MDBV8_BUILD_$(MDBV8_ARCH))
+	$(COMPILE_$(MDBV8_ARCH).c)
+
+$(MDBV8_DYLIB_$(MDBV8_ARCH)): $(MDBV8_OBJECTS_$(MDBV8_ARCH))
+	$(MAKESO_$(MDBV8_ARCH))
+
+$(MDBV8_BUILD_$(MDBV8_ARCH)):
+	$(MKDIRP)
