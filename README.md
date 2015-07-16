@@ -7,7 +7,7 @@ live processes and core dumps of programs using Google's
 [Node.js](https://nodejs.org/).
 
 **For information about using these tools, see the [usage
-guide](docs/usage.md)**
+guide](docs/usage.md).**
 
 
 ## Building and using mdb_v8
