@@ -1,0 +1,11 @@
+#
+# This file is processed by tools/mkversion.  The value here denotes the current
+# version of the debugger module.  Normal (non-release) builds will be tagged
+# with this version, plus a "dev" tag that indicates the version is not final.
+# For a release build, a "release" tag will be applied.  While there may be many
+# "dev" builds with the same version, there should be only one canonical
+# "release" build with a given version number.
+#
+# This value is also used by the "publish" target in the build process.
+#
+0.9.0

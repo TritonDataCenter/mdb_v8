@@ -18,7 +18,8 @@ MDBV8_BUILD_$(MDBV8_ARCH)	:= $(MDBV8_BUILD)/$(MDBV8_ARCH)
 MDBV8_DYLIB_$(MDBV8_ARCH)	:= $(MDBV8_BUILD_$(MDBV8_ARCH))/$(MDBV8_SONAME)
 # List of full paths to architecture-specific object files
 MDBV8_OBJECTS_$(MDBV8_ARCH)	:= \
-    $(MDBV8_SOURCES:%.c=$(MDBV8_BUILD_$(MDBV8_ARCH))/%.o)
+    $(MDBV8_SOURCES:%.c=$(MDBV8_BUILD_$(MDBV8_ARCH))/%.o) \
+    $(MDBV8_GENSOURCES:%.c=$(MDBV8_BUILD_$(MDBV8_ARCH))/%.o)
 
 # List of architecture-specific targets (for defining target-specific variables)
 MDBV8_TARGETS_$(MDBV8_ARCH)	:= \

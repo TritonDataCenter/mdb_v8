@@ -41,6 +41,7 @@ MDBV8_VERS_TAG	 = "dev"
 # the "src/" directory prefix.)
 #
 MDBV8_SOURCES		 = mdb_v8.c mdb_v8_cfg.c
+MDBV8_GENSOURCES	 = mdb_v8_version.c
 
 # List of source files to run through cstyle.  This includes header files.
 MDBV8_CSTYLE_SOURCES	 = $(wildcard src/*.c src/*.h)
@@ -112,3 +113,11 @@ MDBV8_ARCH=ia32
 include Makefile.arch.targ
 MDBV8_ARCH=amd64
 include Makefile.arch.targ
+
+#
+# mdb_v8_version.c is generated based on the "version" file.  The version number
+# is baked into the binary itself (so the dmod can report its version) and also
+# used in the publish target.
+#
+$(MDBV8_BUILD)/mdb_v8_version.c: version
+	tools/mkversion < $^ > $@
