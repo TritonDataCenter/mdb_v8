@@ -23,56 +23,58 @@ var unlinkSync = require('fs').unlinkSync;
 var args = [ corefile ];
 
 if (process.env.MDB_LIBRARY_PATH && process.env.MDB_LIBRARY_PATH != '')
-  args = args.concat([ '-L', process.env.MDB_LIBRARY_PATH ]);
+	args = args.concat([ '-L', process.env.MDB_LIBRARY_PATH ]);
 
 gcore.stderr.on('data', function (data) {
-  console.log('gcore: ' + data);
+	console.log('gcore: ' + data);
 });
 
 gcore.on('exit', function (code) {
-  if (code != 0) {
-    console.error('gcore exited with code ' + code);
-    process.exit(code);
-  }
+	if (code != 0) {
+		console.error('gcore exited with code ' + code);
+		process.exit(code);
+	}
 
-  var mdb = spawn('mdb', args, { stdio: 'pipe' });
+	var mdb = spawn('mdb', args, { stdio: 'pipe' });
 
-  mdb.on('exit', function (code) {
-    var retained = '; core retained as ' + corefile;
+	mdb.on('exit', function (code2) {
+		var retained = '; core retained as ' + corefile;
 
-    if (code != 0) {
-      console.error('mdb exited with code ' + util.inspect(code) + retained);
-      process.exit(code);
-    }
+		if (code2 != 0) {
+			console.error('mdb exited with code ' +
+			    util.inspect(code2) + retained);
+			process.exit(code2);
+		}
 
-    var lines = output.split('\n');
-    var found = 0, i, expected = '"OBEY": "' + obj.OBEY + '"', nexpected = 2;
+		var lines = output.split('\n');
+		var found = 0, i;
+		var expected = '"OBEY": "' + obj.OBEY + '"', nexpected = 2;
 
-    for (var i = 0; i < lines.length; i++) {
-      if (lines[i].indexOf(expected) != -1)
-        found++;
-    }
+		for (i = 0; i < lines.length; i++) {
+			if (lines[i].indexOf(expected) != -1)
+				found++;
+		}
 
-    assert.equal(found, nexpected, 'expected ' + nexpected +
-      ' objects, found ' + found + retained);
+		assert.equal(found, nexpected, 'expected ' + nexpected +
+		    ' objects, found ' + found + retained);
 
-    unlinkSync(corefile);
-    process.exit(0);
-  });
+		unlinkSync(corefile);
+		process.exit(0);
+	});
 
-  mdb.stdout.on('data', function (data) {
-    output += data;
-  });
+	mdb.stdout.on('data', function (data) {
+		output += data;
+	});
 
-  mdb.stderr.on('data', function (data) {
-    console.log('mdb stderr: ' + data);
-  });
+	mdb.stderr.on('data', function (data) {
+		console.log('mdb stderr: ' + data);
+	});
 
-  var mod = util.format('::load %s\n', common.dmodpath());
-  mdb.stdin.write(mod);
-  mdb.stdin.write('::findjsobjects -c LanguageH | ');
-  mdb.stdin.write('::findjsobjects | ::jsprint\n');
-  mdb.stdin.write('::findjsobjects -p OBEY | ');
-  mdb.stdin.write('::findjsobjects | ::jsprint\n');
-  mdb.stdin.end();
+	var mod = util.format('::load %s\n', common.dmodpath());
+	mdb.stdin.write(mod);
+	mdb.stdin.write('::findjsobjects -c LanguageH | ');
+	mdb.stdin.write('::findjsobjects | ::jsprint\n');
+	mdb.stdin.write('::findjsobjects -p OBEY | ');
+	mdb.stdin.write('::findjsobjects | ::jsprint\n');
+	mdb.stdin.end();
 });

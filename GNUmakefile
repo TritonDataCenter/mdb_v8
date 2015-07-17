@@ -65,6 +65,12 @@ CSTYLE_FLAGS		+= -cCp
 # Path to catest tool
 CATEST			 = tools/catest
 
+# JavaScript source files (used in test code)
+JS_FILES		 = $(wildcard test/standalone/*.js)
+JSL_FILES_NODE		 = $(JS_FILES)
+JSSTYLE_FILES		 = $(JS_FILES)
+JSL_CONF_NODE		 = tools/jsl.node.conf
+
 
 #
 # INTERNAL DEFINITIONS
@@ -92,13 +98,13 @@ GITDESCRIBE	 = $(shell git describe --all --long --dirty | \
 .PHONY: all
 all: $(MDBV8_ALLTARGETS)
 
-.PHONY: check
-check:
+check: check-cstyle
+
+.PHONY: check-cstyle
+check-cstyle: 
 	$(CSTYLE) $(CSTYLE_FLAGS) $(MDBV8_CSTYLE_SOURCES)
 
-.PHONY: clean
-clean:
-	-rm -rf $(MDBV8_BUILD)
+CLEAN_FILES += $(MDBV8_BUILD)
 
 .PHONY: test
 test: $(MDBV8_ALLTARGETS)
@@ -131,3 +137,8 @@ include Makefile.arch.targ
 #
 $(MDBV8_BUILD)/mdb_v8_version.c: version
 	tools/mkversion < $^ > $@
+
+#
+# Include common Joyent Makefile for JavaScript "check" targets.
+#
+include Makefile.targ

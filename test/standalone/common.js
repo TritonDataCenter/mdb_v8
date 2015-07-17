@@ -17,5 +17,6 @@ exports.dmodpath = dmodpath;
 function dmodpath()
 {
 	var arch = process.argch == 'x64' ? 'amd64' : 'ia32';
-	return (mod_path.join(__dirname, '..', '..', 'build', arch, 'mdb_v8.so'));
+	return (mod_path.join(
+	    __dirname, '..', '..', 'build', arch, 'mdb_v8.so'));
 }
