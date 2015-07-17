@@ -2,6 +2,8 @@
 
 ## Unreleased changes
 
+* #4 document debug metadata and design constraints
+* #3 JavaScript tests should be style-clean and lint-clean
 * #2 import Node.js postmortem tests
 
 ## v0.9.0 (2015-07-16)
