@@ -12,6 +12,10 @@
 
 ## Unreleased changes
 
+None so far.
+
+## v0.10.0 (2015-07-17)
+
 * #10 some JSDate objects are not printed
 * #9 add basic support for printing RegExps
 * #8 dmod crashes on some very bad strings
