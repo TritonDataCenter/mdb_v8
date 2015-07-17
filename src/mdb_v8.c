@@ -1,25 +1,11 @@
 /*
- * CDDL HEADER START
- *
- * The contents of this file are subject to the terms of the
- * Common Development and Distribution License (the "License").
- * You may not use this file except in compliance with the License.
- *
- * You can obtain a copy of the license at usr/src/OPENSOLARIS.LICENSE
- * or http://www.opensolaris.org/os/licensing.
- * See the License for the specific language governing permissions
- * and limitations under the License.
- *
- * When distributing Covered Code, include this CDDL HEADER in each
- * file and include the License file at usr/src/OPENSOLARIS.LICENSE.
- * If applicable, add the following below this CDDL HEADER, with the
- * fields enclosed by brackets "[]" replaced with your own identifying
- * information: Portions Copyright [yyyy] [name of copyright owner]
- *
- * CDDL HEADER END
+ * This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/.
  */
+
 /*
- * Copyright (c) 2015, Joyent, Inc. All rights reserved.
+ * Copyright (c) 2015, Joyent, Inc.
  */
 
 /*
@@ -29,12 +15,9 @@
  * that predate this metadata.  See mdb_v8_cfg.c for details.
  *
  * NOTE: This dmod implementation (including this file and related headers and C
- * files) exist in both the Node and illumos source trees.  THESE SHOULD BE KEPT
- * IN SYNC.  The version in the Node tree is built directly into modern Node
- * binaries as part of the build process, and the version in the illumos source
- * tree is delivered with the OS for debugging Node binaries that predate
- * support for including the dmod directly in the binary.  Note too that these
- * files have different licenses to match their corresponding repositories.
+ * files) exist in the mdb_v8, Node.js, and SmartOS source trees.  THESE SHOULD
+ * BE KEPT IN SYNC.  Note that these files have different licenses to match
+ * their corresponding repositories.
  */
 
 /*

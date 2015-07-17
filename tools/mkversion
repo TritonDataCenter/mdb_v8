@@ -1,6 +1,16 @@
 #!/bin/bash
 
 #
+# This Source Code Form is subject to the terms of the Mozilla Public
+# License, v. 2.0. If a copy of the MPL was not distributed with this
+# file, You can obtain one at http://mozilla.org/MPL/2.0/.
+#
+
+#
+# Copyright (c) 2015, Joyent, Inc.
+#
+
+#
 # tools/mkversion: given the contents of the "version" file on stdin, emit a C
 # file on stdout that defines appropriate values for the version major, minor,
 # and micro numbers.  Lines beginning with '#' are ignored in the input.  Only
