@@ -12,6 +12,12 @@
 
 ## Unreleased changes
 
+* #10 some JSDate objects are not printed
+* #9 add basic support for printing RegExps
+* #8 dmod crashes on some very bad strings
+* #7 some objects' properties are not printed correctly on 0.12
+* #5 update license to MPL 2.0
+* #6 indjsobjects could prune more garbage
 * #4 document debug metadata and design constraints
 * #3 JavaScript tests should be style-clean and lint-clean
 * #2 import Node.js postmortem tests

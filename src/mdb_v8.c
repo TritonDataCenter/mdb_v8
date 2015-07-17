@@ -150,9 +150,16 @@ static intptr_t	V8_PROP_DESC_VALUE;
 static intptr_t	V8_PROP_DESC_SIZE;
 static intptr_t	V8_TRANSITIONS_IDX_DESC;
 
+static intptr_t V8_TYPE_ACCESSORINFO = -1;
+static intptr_t V8_TYPE_ACCESSORPAIR = -1;
+static intptr_t V8_TYPE_EXECUTABLEACCESSORINFO = -1;
 static intptr_t V8_TYPE_JSOBJECT = -1;
 static intptr_t V8_TYPE_JSARRAY = -1;
 static intptr_t V8_TYPE_JSFUNCTION = -1;
+static intptr_t V8_TYPE_JSDATE = -1;
+static intptr_t V8_TYPE_JSREGEXP = -1;
+static intptr_t V8_TYPE_HEAPNUMBER = -1;
+static intptr_t V8_TYPE_ODDBALL = -1;
 static intptr_t V8_TYPE_FIXEDARRAY = -1;
 
 static intptr_t V8_ELEMENTS_KIND_SHIFT;
@@ -176,6 +183,7 @@ static ssize_t V8_OFF_HEAPNUMBER_VALUE;
 static ssize_t V8_OFF_HEAPOBJECT_MAP;
 static ssize_t V8_OFF_JSARRAY_LENGTH;
 static ssize_t V8_OFF_JSDATE_VALUE;
+static ssize_t V8_OFF_JSREGEXP_DATA;
 static ssize_t V8_OFF_JSFUNCTION_SHARED;
 static ssize_t V8_OFF_JSOBJECT_ELEMENTS;
 static ssize_t V8_OFF_JSOBJECT_PROPERTIES;
@@ -360,6 +368,8 @@ static v8_offset_t v8_offsets[] = {
 	    "JSObject", "elements" },
 	{ &V8_OFF_JSOBJECT_PROPERTIES,
 	    "JSObject", "properties" },
+	{ &V8_OFF_JSREGEXP_DATA,
+	    "JSRegExp", "data", B_TRUE },
 	{ &V8_OFF_MAP_CONSTRUCTOR,
 	    "Map", "constructor" },
 	{ &V8_OFF_MAP_INOBJECT_PROPERTIES,
@@ -455,6 +465,9 @@ typedef enum {
 	/* error-like cases */
 	JPI_SKIPPED   = 0x10,	/* some properties were skipped */
 	JPI_BADLAYOUT = 0x20,	/* we didn't recognize the layout at all */
+	JPI_BADPROPS  = 0x40,	/* property values don't look valid */
+	JPI_MAYBE_GARBAGE = (JPI_SKIPPED | JPI_BADLAYOUT | JPI_BADPROPS),
+	JPI_UNDEFPROPNAME = 0x80,	/* found "undefined" for prop name */
 
 	/* fallback cases */
 	JPI_HASTRANSITIONS	= 0x100, /* found a transitions array */
@@ -470,6 +483,7 @@ typedef struct jsobj_print {
 	uintptr_t jsop_baseaddr;
 	int jsop_nprops;
 	const char *jsop_member;
+	size_t jsop_maxstrlen;
 	boolean_t jsop_found;
 	boolean_t jsop_descended;
 	jspropinfo_t jsop_propinfo;
@@ -481,6 +495,7 @@ static int jsobj_print_jsobject(uintptr_t, jsobj_print_t *);
 static int jsobj_print_jsarray(uintptr_t, jsobj_print_t *);
 static int jsobj_print_jsfunction(uintptr_t, jsobj_print_t *);
 static int jsobj_print_jsdate(uintptr_t, jsobj_print_t *);
+static int jsobj_print_jsregexp(uintptr_t, jsobj_print_t *);
 
 /*
  * Returns 1 if the V8 version v8_major.v8.minor is strictly older than
@@ -578,6 +593,27 @@ autoconfigure(v8_cfg_t *cfgp)
 
 		if (strcmp(ep->v8e_name, "FixedArray") == 0)
 			V8_TYPE_FIXEDARRAY = ep->v8e_value;
+
+		if (strcmp(ep->v8e_name, "AccessorInfo") == 0)
+			V8_TYPE_ACCESSORINFO = ep->v8e_value;
+
+		if (strcmp(ep->v8e_name, "AccessorPair") == 0)
+			V8_TYPE_ACCESSORPAIR = ep->v8e_value;
+
+		if (strcmp(ep->v8e_name, "ExecutableAccessorInfo") == 0)
+			V8_TYPE_EXECUTABLEACCESSORINFO = ep->v8e_value;
+
+		if (strcmp(ep->v8e_name, "HeapNumber") == 0)
+			V8_TYPE_HEAPNUMBER = ep->v8e_value;
+
+		if (strcmp(ep->v8e_name, "JSDate") == 0)
+			V8_TYPE_JSDATE = ep->v8e_value;
+
+		if (strcmp(ep->v8e_name, "JSRegExp") == 0)
+			V8_TYPE_JSREGEXP = ep->v8e_value;
+
+		if (strcmp(ep->v8e_name, "Oddball") == 0)
+			V8_TYPE_ODDBALL = ep->v8e_value;
 	}
 
 	if (V8_TYPE_JSOBJECT == -1) {
@@ -599,6 +635,24 @@ autoconfigure(v8_cfg_t *cfgp)
 		mdb_warn("couldn't find FixedArray type\n");
 		failed++;
 	}
+
+	/*
+	 * It's non-fatal if we can't find HeapNumber, JSDate, JSRegExp, or
+	 * Oddball because they're only used for heuristics.  It's not even a
+	 * warning if we don't find the Accessor-related fields for the same
+	 * reason, and they change too much to even bother warning.
+	 */
+	if (V8_TYPE_HEAPNUMBER == -1)
+		mdb_warn("couldn't find HeapNumber type\n");
+
+	if (V8_TYPE_JSDATE == -1)
+		mdb_warn("couldn't find JSDate type\n");
+
+	if (V8_TYPE_JSREGEXP == -1)
+		mdb_warn("couldn't find JSRegExp type\n");
+
+	if (V8_TYPE_ODDBALL == -1)
+		mdb_warn("couldn't find Oddball type\n");
 
 	/*
 	 * Finally, load various class offsets.
@@ -950,6 +1004,7 @@ conf_class_compute_offsets(v8_class_t *clp)
 static int jsstr_print(uintptr_t, uint_t, char **, size_t *);
 static boolean_t jsobj_is_undefined(uintptr_t addr);
 static boolean_t jsobj_is_hole(uintptr_t addr);
+static boolean_t jsobj_maybe_garbage(uintptr_t addr);
 
 static const char *
 enum_lookup_str(v8_enum_t *enums, int val, const char *dflt)
@@ -1275,7 +1330,8 @@ read_size(size_t *valp, uintptr_t addr)
  */
 static int
 read_heap_dict(uintptr_t addr,
-    int (*func)(const char *, uintptr_t, void *), void *arg)
+    int (*func)(const char *, uintptr_t, void *), void *arg,
+    jspropinfo_t *propinfo)
 {
 	uint8_t type;
 	uintptr_t len;
@@ -1326,6 +1382,9 @@ read_heap_dict(uintptr_t addr,
 			if (jsstr_print(dict[i], JSSTR_NUDE, &bufp, &len) != 0)
 				goto out;
 		}
+
+		if (propinfo != NULL && jsobj_maybe_garbage(dict[i + 1]))
+			*propinfo |= JPI_BADPROPS;
 
 		if (func(buf, dict[i + 1], arg) == -1)
 			goto out;
@@ -1717,11 +1776,17 @@ jsstr_print_seq(uintptr_t addr, uint_t flags, char **bufp, size_t *lenp,
 		nreadoffset = sliceoffset;
 		nreadbytes = nstrbytes + sizeof ("\"\"") <= *lenp ?
 		    nstrbytes : *lenp - sizeof ("\"\"[...]");
+
+		if (nreadbytes > blen)
+			nreadbytes = blen - sizeof ("\"\"[...]");
 	} else {
 		nstrbytes = 2 * nstrchrs;
 		nreadoffset = 2 * sliceoffset;
 		nreadbytes = nstrchrs + sizeof ("\"\"") <= *lenp ?
 		    nstrbytes : 2 * (*lenp - sizeof ("\"\"[...]"));
+
+		if (nreadbytes > blen)
+			nreadbytes = blen - 2 * sizeof ("\"\"[...]");
 	}
 
 	if (nreadbytes < 0) {
@@ -1729,7 +1794,7 @@ jsstr_print_seq(uintptr_t addr, uint_t flags, char **bufp, size_t *lenp,
 		 * We don't even have the room to store the ellipsis; zero
 		 * the buffer out and set the length to zero.
 		 */
-		*bufp = '\0';
+		**bufp = '\0';
 		*lenp = 0;
 		return (0);
 	}
@@ -1890,7 +1955,7 @@ static int
 jsstr_print_external(uintptr_t addr, uint_t flags, char **bufp, size_t *lenp)
 {
 	uintptr_t ptr1, ptr2;
-	size_t blen = *lenp + 1;
+	size_t blen = MAX(1, (ssize_t)(*lenp) - 2);
 	char *buf;
 	boolean_t quoted = flags & JSSTR_QUOTED ? B_TRUE : B_FALSE;
 	int rval = -1;
@@ -1987,6 +2052,33 @@ static boolean_t
 jsobj_is_hole(uintptr_t addr)
 {
 	return (jsobj_is_oddball(addr, "hole"));
+}
+
+/*
+ * Returns true if the value at "addr" appears to be invalid (as an object that
+ * has been partially garbage-collected).  This heuristic only eliminates heap
+ * objects with types that are not types printable by obj_jsprint().  We also
+ * avoid marking accessors as garbage, even though obj_jsprint() doesn't support
+ * them.
+ */
+static boolean_t
+jsobj_maybe_garbage(uintptr_t addr)
+{
+	uint8_t type;
+
+	return (!V8_IS_SMI(addr) &&
+	    (read_typebyte(&type, addr) != 0 ||
+	    (!V8_TYPE_STRING(type) &&
+	    type != V8_TYPE_ACCESSORINFO &&
+	    type != V8_TYPE_ACCESSORPAIR &&
+	    type != V8_TYPE_EXECUTABLEACCESSORINFO &&
+	    type != V8_TYPE_HEAPNUMBER &&
+	    type != V8_TYPE_ODDBALL &&
+	    type != V8_TYPE_JSOBJECT &&
+	    type != V8_TYPE_JSARRAY &&
+	    type != V8_TYPE_JSFUNCTION &&
+	    type != V8_TYPE_JSDATE &&
+	    type != V8_TYPE_JSREGEXP)));
 }
 
 /*
@@ -2180,6 +2272,14 @@ jsobj_properties(uintptr_t addr,
 
 				snprintf(name, sizeof (name), "%" PRIdPTR, ii);
 
+				/*
+				 * If the property value doesn't look like a
+				 * valid JavaScript object, mark this object as
+				 * dubious.
+				 */
+				if (jsobj_maybe_garbage(elts[ii]))
+					propinfo |= JPI_BADPROPS;
+
 				if (func(name, elts[ii], arg) != 0) {
 					mdb_free(elts, sz);
 					goto err;
@@ -2187,7 +2287,8 @@ jsobj_properties(uintptr_t addr,
 			}
 		} else if (kind == V8_ELEMENTS_DICTIONARY_ELEMENTS) {
 			propinfo |= JPI_DICT;
-			if (read_heap_dict(elements, func, arg) != 0) {
+			if (read_heap_dict(elements, func, arg,
+			    &propinfo) != 0) {
 				mdb_free(elts, sz);
 				goto err;
 			}
@@ -2238,7 +2339,7 @@ jsobj_properties(uintptr_t addr,
 			propinfo |= JPI_DICT;
 			if (propinfop != NULL)
 				*propinfop = propinfo;
-			return (read_heap_dict(ptr, func, arg));
+			return (read_heap_dict(ptr, func, arg, propinfop));
 		}
 	} else if (V8_OFF_MAP_INSTANCE_DESCRIPTORS != -1) {
 		uintptr_t bit_field3;
@@ -2262,7 +2363,7 @@ jsobj_properties(uintptr_t addr,
 			propinfo |= JPI_DICT;
 			if (propinfop != NULL)
 				*propinfop = propinfo;
-			return (read_heap_dict(ptr, func, arg));
+			return (read_heap_dict(ptr, func, arg, propinfop));
 		}
 	}
 
@@ -2350,7 +2451,7 @@ jsobj_properties(uintptr_t addr,
 	 * of instance descriptors.
 	 */
 	for (ii = 0; ii < rndescs; ii++) {
-		uintptr_t keyidx, validx, detidx, baseidx;
+		intptr_t keyidx, validx, detidx, baseidx, propaddr, propidx;
 		char buf[1024];
 		intptr_t val;
 		size_t len = sizeof (buf);
@@ -2401,50 +2502,90 @@ jsobj_properties(uintptr_t addr,
 		}
 
 		if (jsstr_print(descs[keyidx], JSSTR_NUDE, &c, &len) != 0) {
-			propinfo |= JPI_SKIPPED;
-			continue;
-		}
-
-		val = (intptr_t)content[validx];
-		if (!V8_IS_SMI(val)) {
-			propinfo |= JPI_SKIPPED;
-			v8_warn("object %p: property descriptor %d: value "
-			    "index is not an SMI: %p\n", addr, ii, val);
+			if (jsobj_is_undefined(descs[keyidx])) {
+				/*
+				 * In some cases, we've encountered objects that
+				 * look basically fine, but have a bunch of
+				 * extra "undefined" values in the instance
+				 * descriptors.  Just ignore these, but mark
+				 * them in case a developer wants to find them
+				 * later.
+				 */
+				propinfo |= JPI_UNDEFPROPNAME;
+			} else {
+				propinfo |= JPI_SKIPPED;
+				v8_warn("property descriptor %d: could not "
+				    "print %p as a string\n", ii,
+				    descs[keyidx]);
+			}
 			continue;
 		}
 
 		/*
-		 * The "value" part of each property descriptor tells us whether
-		 * the property value is stored directly in the object or in the
-		 * related "props" array.  See JSObject::RawFastPropertyAt() in
-		 * the V8 source.
+		 * There are two possibilities at this point: the property may
+		 * be stored directly inside the object (like a C struct), or it
+		 * may be stored inside the attached "properties" array.  The
+		 * details vary whether we're looking at the V8 bundled with
+		 * v0.10 or v0.12.  The specific V8 version affects not only how
+		 * to tell which kind of property is used, but also how to
+		 * compute the in-object address from the information available.
 		 */
-		val = V8_SMI_VALUE(val) - ninprops;
-		if (val < 0) {
-			uintptr_t propaddr;
-
+		propaddr = 0;
+		ptr = 0;
+		if (v8_major > 3 || (v8_major == 3 && v8_minor >= 26)) {
 			/*
-			 * The property is stored directly inside the object.
-			 * In Node 0.10, "val - ninprops" is the (negative)
-			 * index of the property counted from the end of the
-			 * object.  In that context, -1 refers to the last
-			 * word in the object; -2 refers to the second-last
-			 * word, and so on.
-			 *
-			 * In Node 0.12, we get the 0-based index from the
-			 * first property inside the object by reading certain
-			 * bits from the property descriptor details word.
-			 * These constants are literal here because they're
-			 * literal in the V8 source itself.
+			 * In Node v0.12, the property's 0-based index is stored
+			 * in a bitfield in the "property details" word.  These
+			 * constants are literal here because they're literal in
+			 * the V8 source itself.  We use the heuristic that if
+			 * the property index refers to something obviously not
+			 * in the object, then it must be part of the
+			 * "properties" array.
 			 */
-			if (v8_major > 3 || (v8_major == 3 && v8_minor >= 26)) {
-				val = V8_PROP_FIELDINDEX(content[detidx]);
+			propidx = V8_PROP_FIELDINDEX(content[detidx]);
+			if (propidx < ninprops) {
+				/* The property is stored inside the object. */
 				propaddr = addr + V8_OFF_HEAP(
-				    size - (ninprops - val) * ps);
-			} else {
-				propaddr = addr + V8_OFF_HEAP(size + val * ps);
+				    size - (ninprops - propidx) * ps);
+			}
+		} else {
+			/*
+			 * In v0.10 and earlier, the "value" part of each
+			 * property descriptor tells us whether the property
+			 * value is stored directly in the object or in the
+			 * related "props" array.  See
+			 * JSObject::RawFastPropertyAt() in the V8 source.
+			 */
+			val = (intptr_t)content[validx];
+			if (!V8_IS_SMI(val)) {
+				propinfo |= JPI_SKIPPED;
+				v8_warn("object %p: property descriptor %d: "
+				    "value index is not an SMI: %p\n", addr,
+				    ii, val);
+				continue;
 			}
 
+			propidx = V8_SMI_VALUE(val) - ninprops;
+			if (propidx < 0) {
+				/*
+				 * The property is stored directly inside the
+				 * object.  In Node 0.10, "val - ninprops" is
+				 * the (negative) index of the property counted
+				 * from the end of the object.  In that context,
+				 * -1 refers to the last word in the object; -2
+				 * refers to the second-last word, and so on.
+				 */
+				propaddr = addr +
+				    V8_OFF_HEAP(size + propidx * ps);
+			}
+		}
+
+		/*
+		 * Now that we've figured out what kind of property it is and
+		 * where it's located, read the value into "ptr".
+		 */
+		if (propaddr != 0) {
+			/* This is an in-object property. */
 			if (mdb_vread(&ptr, sizeof (ptr), propaddr) == -1) {
 				propinfo |= JPI_SKIPPED;
 				v8_warn("object %p: failed to read in-object "
@@ -2453,29 +2594,33 @@ jsobj_properties(uintptr_t addr,
 			}
 
 			propinfo |= JPI_INOBJECT;
+		} else if (propidx >= 0 && propidx < nprops) {
+			/* Valid "properties" array property found. */
+			ptr = props[propidx];
+			propinfo |= JPI_PROPS;
 		} else {
 			/*
-			 * The property is in the separate "props" array.
+			 * Invalid "properties" array property found.  This can
+			 * happen when properties are deleted.  If this value
+			 * isn't obviously corrupt, we'll just silently ignore
+			 * it.
 			 */
-			if (val >= nprops) {
-				/*
-				 * This can happen when properties are deleted.
-				 * If this value isn't obviously corrupt, we'll
-				 * just silently ignore it.
-				 */
-				if (val < rndescs)
-					continue;
+			if (propidx < rndescs)
+				continue;
 
-				propinfo |= JPI_SKIPPED;
-				v8_warn("object %p: property descriptor %d: "
-				    "value index value (%d) out of bounds "
-				    "(%d)\n", addr, ii, val, nprops);
-				goto err;
-			}
-
-			propinfo |= JPI_PROPS;
-			ptr = props[val];
+			propinfo |= JPI_SKIPPED;
+			v8_warn("object %p: property descriptor %d: "
+			    "value index value out of bounds (%d)\n",
+			    addr, ii, nprops);
+			goto err;
 		}
+
+		/*
+		 * If the property value doesn't look like a valid JavaScript
+		 * object, mark this object as dubious.
+		 */
+		if (jsobj_maybe_garbage(ptr))
+			propinfo |= JPI_BADPROPS;
 
 		if (func(buf, ptr, arg) != 0)
 			goto err;
@@ -2759,6 +2904,7 @@ jsobj_print(uintptr_t addr, jsobj_print_t *jsop)
 		{ "JSArray", jsobj_print_jsarray },
 		{ "JSFunction", jsobj_print_jsfunction },
 		{ "JSDate", jsobj_print_jsdate },
+		{ "JSRegExp", jsobj_print_jsregexp },
 		{ NULL }
 	}, *ent;
 
@@ -2784,10 +2930,31 @@ jsobj_print(uintptr_t addr, jsobj_print_t *jsop)
 	}
 
 	if (V8_TYPE_STRING(type)) {
-		if (jsstr_print(addr, JSSTR_QUOTED, bufp, lenp) == -1)
-			return (-1);
+		size_t omax, maxstrlen;
+		int rv;
 
-		return (0);
+		/*
+		 * The undocumented -N option to ::jsprint puts an artificial
+		 * limit on the length of strings printed out.  We implement
+		 * this here by passing a smaller length to jsstr_print(), and
+		 * then updating the real buffer length to match.
+		 *
+		 * This is mainly intended for dmod developers, as when printing
+		 * out every object in a core file.  Many strings contain entire
+		 * source code files and are largely not interesting.
+		 */
+		if (jsop->jsop_maxstrlen == 0 ||
+		    jsop->jsop_maxstrlen >= *lenp) {
+			maxstrlen = *lenp;
+		} else {
+			maxstrlen = jsop->jsop_maxstrlen;
+		}
+
+		omax = maxstrlen;
+		rv = jsstr_print(addr, JSSTR_QUOTED, bufp, &maxstrlen);
+		assert(maxstrlen <= omax);
+		*lenp -= omax - maxstrlen;
+		return (rv);
 	}
 
 	klass = enum_lookup_str(v8_types, type, "<unknown>");
@@ -3110,23 +3277,76 @@ jsobj_print_jsdate(uintptr_t addr, jsobj_print_t *jsop)
 		return (-1);
 	}
 
-	if (read_typebyte(&type, value) != 0) {
-		(void) bsnprintf(bufp, lenp, "<JSDate (failed to read type)>");
-		return (-1);
-	}
+	if (V8_IS_SMI(value)) {
+		numval = V8_SMI_VALUE(value);
+	} else {
+		if (read_typebyte(&type, value) != 0) {
+			(void) bsnprintf(bufp, lenp,
+			    "<JSDate (failed to read type)>");
+			return (-1);
+		}
 
-	if (strcmp(enum_lookup_str(v8_types, type, ""), "HeapNumber") != 0)
-		return (-1);
+		if (strcmp(enum_lookup_str(v8_types, type, ""),
+		    "HeapNumber") != 0) {
+			(void) bsnprintf(bufp, lenp,
+			    "<JSDate (value has unexpected type)>");
+			return (-1);
+		}
 
-	if (read_heap_double(&numval, value, V8_OFF_HEAPNUMBER_VALUE) == -1) {
-		(void) bsnprintf(bufp, lenp, "<JSDate (failed to read num)>");
-		return (-1);
+		if (read_heap_double(&numval, value,
+		    V8_OFF_HEAPNUMBER_VALUE) == -1) {
+			(void) bsnprintf(bufp, lenp,
+			    "<JSDate (failed to read num)>");
+			return (-1);
+		}
 	}
 
 	mdb_snprintf(buf, sizeof (buf), "%Y",
 	    (time_t)((long long)numval / MILLISEC));
 	(void) bsnprintf(bufp, lenp, "%lld (%s)", (long long)numval, buf);
 
+	return (0);
+}
+
+static int
+jsobj_print_jsregexp(uintptr_t addr, jsobj_print_t *jsop)
+{
+	char **bufp = jsop->jsop_bufp;
+	size_t *lenp = jsop->jsop_lenp;
+	uintptr_t datap, source;
+	uintptr_t *data;
+	size_t datalen;
+	int source_index = 1;
+
+	if (V8_OFF_JSREGEXP_DATA == -1) {
+		(void) bsnprintf(bufp, lenp, "<JSRegExp>");
+		return (0);
+	}
+
+	if (read_heap_ptr(&datap, addr, V8_OFF_JSREGEXP_DATA) != 0) {
+		(void) bsnprintf(bufp, lenp,
+		    "<JSRegExp (failed to read data)>");
+		return (-1);
+	}
+
+	if (read_heap_array(datap, &data, &datalen, UM_SLEEP | UM_GC) != 0) {
+		(void) bsnprintf(bufp, lenp,
+		    "<JSRegExp (failed to read array)>");
+		return (-1);
+	}
+
+	/*
+	 * The value for "source_index" here is unchanged from Node v0.6 through
+	 * Node v0.12, but should ideally come from v8 debug metadata.
+	 */
+	if (datalen < source_index + 1) {
+		(void) bsnprintf(bufp, lenp, "<JSRegExp (array too small)>");
+		return (-1);
+	}
+
+	source = data[source_index];
+	(void) bsnprintf(bufp, lenp, "JSRegExp: ");
+	(void) jsstr_print(source, JSSTR_QUOTED, bufp, lenp);
 	return (0);
 }
 
@@ -3779,6 +3999,7 @@ typedef struct findjsobjects_stats {
 	int fjss_typereads;
 	int fjss_jsobjs;
 	int fjss_objects;
+	int fjss_garbage;
 	int fjss_arrays;
 	int fjss_uniques;
 	int fjss_funcs;
@@ -3852,6 +4073,12 @@ findjsobjects_cmp(findjsobjects_obj_t *lhs, findjsobjects_obj_t *rhs)
 {
 	findjsobjects_prop_t *lprop, *rprop;
 	int rv;
+
+	/*
+	 * Don't group malformed objects with normal ones or vice versa.
+	 */
+	if (lhs->fjso_malformed != rhs->fjso_malformed)
+		return (lhs->fjso_malformed ? -1 : 1);
 
 	lprop = lhs->fjso_props;
 	rprop = rhs->fjso_props;
@@ -3979,7 +4206,7 @@ findjsobjects_constructor(findjsobjects_obj_t *obj)
 	if (read_typebyte(&type, addr) != 0)
 		goto out;
 
-	if (strcmp(enum_lookup_str(v8_types, type, ""), "JSFunction") != 0)
+	if (type != V8_TYPE_JSFUNCTION)
 		goto out;
 
 	if (read_heap_ptr(&funcinfop, addr, V8_OFF_JSFUNCTION_SHARED) != 0)
@@ -4121,6 +4348,12 @@ findjsobjects_range(findjsobjects_state_t *fjs, uintptr_t addr, uintptr_t size)
 				findjsobjects_free(fjs->fjs_current);
 				fjs->fjs_current = NULL;
 				continue;
+			}
+
+			if ((fjs->fjs_current->fjso_propinfo &
+			    (JPI_MAYBE_GARBAGE)) != 0) {
+				stats->fjss_garbage++;
+				fjs->fjs_current->fjso_malformed = B_TRUE;
 			}
 
 			findjsobjects_constructor(fjs->fjs_current);
@@ -4424,6 +4657,9 @@ findjsobjects_match_kind(findjsobjects_obj_t *obj, const char *propkind)
 	    ((p & JPI_HASCONTENT) != 0 &&
 	    strstr(propkind, "content") != NULL) ||
 	    ((p & JPI_SKIPPED) != 0 && strstr(propkind, "skipped") != NULL) ||
+	    ((p & JPI_UNDEFPROPNAME) != 0 &&
+	    strstr(propkind, "undefpropname") != NULL) ||
+	    ((p & JPI_BADPROPS) != 0 && strstr(propkind, "badprop") != NULL) ||
 	    ((p & JPI_BADLAYOUT) != 0 &&
 	    strstr(propkind, "badlayout") != NULL)) {
 		mdb_printf("%p\n", obj->fjso_instances.fjsi_addr);
@@ -4619,6 +4855,7 @@ findjsobjects_run(findjsobjects_state_t *fjs)
 			mdb_printf(f, "cached reads", stats->fjss_cached);
 			mdb_printf(f, "JavaScript objects", stats->fjss_jsobjs);
 			mdb_printf(f, "processed objects", stats->fjss_objects);
+			mdb_printf(f, "possible garbage", stats->fjss_garbage);
 			mdb_printf(f, "processed arrays", stats->fjss_arrays);
 			mdb_printf(f, "unique objects", stats->fjss_uniques);
 			mdb_printf(f, "functions found", stats->fjss_funcs);
@@ -4921,11 +5158,16 @@ jsobj_print_propinfo(jspropinfo_t propinfo)
 		mdb_printf("\n");
 	}
 
+	if ((propinfo & JPI_UNDEFPROPNAME) != 0)
+		mdb_printf(
+		    "some properties skipped due to undefined property name\n");
 	if ((propinfo & JPI_SKIPPED) != 0)
 		mdb_printf(
 		    "some properties skipped due to unexpected layout\n");
 	if ((propinfo & JPI_BADLAYOUT) != 0)
 		mdb_printf("object has unexpected layout\n");
+	if ((propinfo & JPI_BADPROPS) != 0)
+		mdb_printf("object has invalid-looking property values\n");
 }
 
 /* ARGSUSED */
@@ -4937,6 +5179,7 @@ dcmd_jsprint(uintptr_t addr, uint_t flags, int argc, const mdb_arg_t *argv)
 	jsobj_print_t jsop;
 	boolean_t opt_b = B_FALSE;
 	boolean_t opt_v = B_FALSE;
+	uint64_t strlen_override = 0;
 	int rv, i;
 
 	bzero(&jsop, sizeof (jsop));
@@ -4947,7 +5190,10 @@ dcmd_jsprint(uintptr_t addr, uint_t flags, int argc, const mdb_arg_t *argv)
 	    'a', MDB_OPT_SETBITS, B_TRUE, &jsop.jsop_printaddr,
 	    'b', MDB_OPT_SETBITS, B_TRUE, &opt_b,
 	    'd', MDB_OPT_UINT64, &jsop.jsop_depth,
+	    'N', MDB_OPT_UINT64, &strlen_override,
 	    'v', MDB_OPT_SETBITS, B_TRUE, &opt_v, NULL);
+
+	jsop.jsop_maxstrlen = (int)strlen_override;
 
 	if (opt_b)
 		jsop.jsop_baseaddr = addr;
