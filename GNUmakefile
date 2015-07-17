@@ -62,6 +62,9 @@ SOFLAGS			 = -Wl,-soname=$(MDBV8_SONAME)
 CSTYLE			 = tools/cstyle.pl
 CSTYLE_FLAGS		+= -cCp
 
+# Path to catest tool
+CATEST			 = tools/catest
+
 
 #
 # INTERNAL DEFINITIONS
@@ -96,6 +99,13 @@ check:
 .PHONY: clean
 clean:
 	-rm -rf $(MDBV8_BUILD)
+
+.PHONY: test
+test: $(MDBV8_ALLTARGETS)
+	$(CATEST) -a
+
+.PHONY: prepush
+prepush: check test
 
 .PHONY: release
 release: MDBV8_VERS_TAG := "release, from $(GITDESCRIBE)"
