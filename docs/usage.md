@@ -114,7 +114,8 @@ Here's the minimum you should know to use MDB for Node.js:
 * After launching MDB, you'll want to load the Node-specific debugger module.
   On SmartOS systems, you can just type `::load /path/to/mdb_v8.so`.
 
-<!-- XXX add link to a Manta copy of the latest mdb_v8.so -->
+To get the latest copy of the mdb\_v8.so file, see the [README](../README.md) in
+this repo.
 
 
 ## Tutorial
@@ -181,8 +182,8 @@ the V8 debugger module:
     C++ symbol demangling enabled
 
 This will load the copy of mdb\_v8.so that's shipped with your version of
-SmartOS.  You may want to build a newer copy of this <!-- XXX where --> and
-load it using:
+SmartOS.  You may want to use a newer copy of this binary from the mdb\_v8
+github project.  You can load a newer binary using:
 
     > ::load /path/to/mdb_v8.so
     V8 version: 3.14.5.9
