@@ -3612,7 +3612,7 @@ dcmd_v8scopeinfo(uintptr_t addr, uint_t flags, int argc, const mdb_arg_t *argv)
 	char *bufp;
 	size_t buflen;
 
-	if (read_heap_array(addr, &scopeinfo, &len, UM_SLEEP) != 0) {
+	if (read_heap_array(addr, &scopeinfo, &len, UM_SLEEP | UM_GC) != 0) {
 		mdb_warn("failed to read heap array for ScopeInfo\n");
 		return (DCMD_ERR);
 	}
@@ -3676,6 +3676,66 @@ dcmd_v8scopeinfo(uintptr_t addr, uint_t flags, int argc, const mdb_arg_t *argv)
  * - add ::jsclosure, which is given a JSFunction, and basically prints out the
  *   context-local variables.  Maybe recursive?
  */
+
+/* ARGSUSED */
+static int
+dcmd_v8context(uintptr_t addr, uint_t flags, int argc, const mdb_arg_t *argv)
+{
+	uintptr_t *context;
+	size_t len;
+	/* XXX These need to be driven by V8 metadata. */
+	intptr_t si_previous = 1;
+	intptr_t si_commonslots = 4;
+	char buf[64];
+	size_t bufsz, i;
+	char *bufp;
+	char *fields[] = {
+	    "closure function",
+	    "previous context",
+	    "extension",
+	    "global object"
+	};
+
+	if (read_heap_array(addr, &context, &len, UM_SLEEP | UM_GC) != 0) {
+		mdb_warn("failed to read heap array for Context\n");
+		return (DCMD_ERR);
+	}
+
+	if (len < si_commonslots) {
+		mdb_warn("array too short to be a Context\n");
+		return (DCMD_ERR);
+	}
+
+	if (context[si_previous] != NULL) {
+		mdb_printf("function context:\n");
+	} else {
+		mdb_printf("\"with\" context:");
+	}
+
+	for (i = 0; i < sizeof (fields) / sizeof (fields[0]); i++) {
+		/* XXX offset should not be hardcoded this way */
+		mdb_printf("    %s: %p", fields[i], context[i]);
+		bufp = buf;
+		bufsz = sizeof (buf);
+		if (obj_jstype(context[i], &bufp, &bufsz, NULL) == 0)
+			mdb_printf(" (%s)\n", buf);
+		else
+			mdb_printf("\n");
+	}
+
+	for (; i < len; i++) {
+		mdb_printf("    slot %d: %p", i - si_commonslots, context[i]);
+		bufp = buf;
+		bufsz = sizeof (buf);
+		if (obj_jstype(context[i], &bufp, &bufsz, NULL) == 0)
+			mdb_printf(" (%s)\n", buf);
+		else
+			mdb_printf("\n");
+	}
+
+	return (DCMD_OK);
+}
+
 
 /* ARGSUSED */
 static int
@@ -5919,6 +5979,8 @@ static const mdb_dcmd_t v8_mdb_dcmds[] = {
 		dcmd_v8classes },
 	{ "v8code", ":[-d]", "print information about a V8 Code object",
 		dcmd_v8code },
+	{ "v8context", ":[-d]", "print information about a V8 Context object",
+		dcmd_v8context },
 	{ "v8field", "classname fieldname offset",
 		"manually add a field to a given class", dcmd_v8field },
 	{ "v8function", ":[-d]", "print JSFunction object details",
