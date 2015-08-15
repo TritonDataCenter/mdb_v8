@@ -3350,6 +3350,86 @@ jsobj_print_jsregexp(uintptr_t addr, jsobj_print_t *jsop)
 	return (0);
 }
 
+typedef int (*scopeinfo_var_func_t)(unsigned int, const char *, void *);
+
+static int
+v8scopeinfo_iter_ctx_names(uintptr_t addr, scopeinfo_var_func_t func, void *arg)
+{
+	/* XXX commonize with ::v8context */
+	uintptr_t *scopeinfo;
+	size_t len;
+	unsigned int i, start;
+	/* XXX see comment in ::v8context */
+	intptr_t si_first_variable = 4;
+	intptr_t si_paramcount = 1;
+	intptr_t si_stacklocalcount = 2;
+	intptr_t si_ctxlocalcount = 3;
+	char buf[80];
+	char *bufp;
+	size_t buflen;
+	int rv;
+
+	if (read_heap_array(addr, &scopeinfo, &len, UM_SLEEP | UM_GC) != 0) {
+		mdb_warn("failed to read heap array for ScopeInfo\n");
+		return (DCMD_ERR);
+	}
+
+	if (len < si_first_variable) {
+		mdb_warn("array too short to be a ScopeInfo\n");
+		return (DCMD_ERR);
+	}
+
+	if (!V8_IS_SMI(scopeinfo[si_paramcount]) ||
+	    !V8_IS_SMI(scopeinfo[si_stacklocalcount]) ||
+	    !V8_IS_SMI(scopeinfo[si_ctxlocalcount])) {
+		mdb_warn("static ScopeInfo fields do not look like SMIs\n");
+		return (DCMD_ERR);
+	}
+	/* end duplicated in ::v8context */
+
+	start = si_first_variable +
+	    V8_SMI_VALUE(scopeinfo[si_paramcount]) +
+	    V8_SMI_VALUE(scopeinfo[si_stacklocalcount]);
+	rv = 0;
+	for (i = 0; i < V8_SMI_VALUE(scopeinfo[si_ctxlocalcount]); i++) {
+		bufp = buf;
+		buflen = sizeof (buf);
+		rv = jsstr_print(scopeinfo[start + i], JSSTR_QUOTED,
+		    &bufp, &buflen);
+		if (rv == 0)
+			rv = func(i, buf, arg);
+		if (rv != 0)
+			break;
+	}
+
+	return (rv);
+}
+
+static int
+v8context_scopeinfo(uintptr_t *scopeinfop, uintptr_t context)
+{
+	/* XXX validate and commonize with other functions */
+	uintptr_t closure, shared;
+	uintptr_t *contextelts;
+	size_t nelts;
+	intptr_t V8_OFF_SHAREDFUNCTIONINFO_SCOPE_INFO = 0x10 - 1; /* XXX */
+
+	/* XXX UM_GC? */
+	if (read_heap_array(context, &contextelts, &nelts,
+	    UM_SLEEP | UM_GC) != 0) {
+		return (-1);
+	}
+
+	closure = contextelts[0];
+	if (read_heap_ptr(&shared, closure, V8_OFF_JSFUNCTION_SHARED) != 0 ||
+	    read_heap_ptr(scopeinfop, shared,
+	    V8_OFF_SHAREDFUNCTIONINFO_SCOPE_INFO) != 0) {
+		return (-1);
+	}
+	
+	return (0);
+}
+
 /*
  * dcmd implementations
  */
@@ -5206,6 +5286,70 @@ dcmd_nodebuffer(uintptr_t addr, uint_t flags, int argc,
 	return (DCMD_OK);
 }
 
+static int
+jsclosure_ctx_variable(unsigned int idx, const char *name, void *arg)
+{
+	uintptr_t *contextelts = arg;
+	uintptr_t val = contextelts[idx + 4]; /* XXX si_commonslots */
+	char buf[80];
+	char *bufp = buf;
+	size_t bufsz = sizeof (buf);
+
+	mdb_printf("%s: %p", name, val);
+	if (obj_jstype(val, &bufp, &bufsz, NULL) == 0) {
+		mdb_printf(" (%s)\n", buf);
+	} else {
+		mdb_printf("\n");
+	}
+
+	/* XXX really need to commonize this with ::v8context */
+	return (0);
+}
+
+/* ARGSUSED */
+static int
+dcmd_jsclosure(uintptr_t addr, uint_t flags, int argc, const mdb_arg_t *argv)
+{
+	const char *typename;
+	uint8_t type;
+	uintptr_t context, scopeinfo;
+	uintptr_t *contextelts;
+	size_t nelts;
+
+	if (!V8_IS_HEAPOBJECT(addr) || read_typebyte(&type, addr) != 0) {
+		mdb_warn("%p is not a heap object\n", addr);
+		return (DCMD_ERR);
+	}
+
+	typename = enum_lookup_str(v8_types, type, "");
+	if (strcmp(typename, "JSFunction") != 0) {
+		mdb_warn("%p is not a JSFunction\n", addr);
+		return (DCMD_ERR);
+	}
+
+	intptr_t V8_OFF_JSFUNCTION_CONTEXT = 0x17; /* XXX */
+	if (read_heap_ptr(&context, addr, V8_OFF_JSFUNCTION_CONTEXT) != 0 ||
+	    v8context_scopeinfo(&scopeinfo, context) != 0) {
+		mdb_warn("%p: failed to get ScopeInfo\n", addr);
+		return (DCMD_ERR);
+	}
+
+	/* XXX commonize with elsewhere */
+	if (read_heap_array(context, &contextelts, &nelts,
+	    UM_SLEEP | UM_GC) != 0) {
+		mdb_warn("failed to read heap array for Context\n");
+		return (DCMD_ERR);
+	}
+
+	if (v8scopeinfo_iter_ctx_names(scopeinfo, jsclosure_ctx_variable,
+	    contextelts) != 0) {
+		return (DCMD_ERR);
+	}
+
+	return (DCMD_OK);
+}
+
+
 /* ARGSUSED */
 static int
 dcmd_jsconstructor(uintptr_t addr, uint_t flags, int argc,
@@ -5952,6 +6096,8 @@ static const mdb_dcmd_t v8_mdb_dcmds[] = {
 	/*
 	 * Commands to inspect JavaScript-level state
 	 */
+	{ "jsclosure", ":", "print variables referenced by a closure",
+		dcmd_jsclosure },
 	{ "jsconstructor", ":[-v]",
 		"print the constructor for a JavaScript object",
 		dcmd_jsconstructor },
