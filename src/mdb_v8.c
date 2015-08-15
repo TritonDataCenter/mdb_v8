@@ -3585,6 +3585,98 @@ dcmd_v8print(uintptr_t addr, uint_t flags, int argc, const mdb_arg_t *argv)
 	return (obj_print_class(addr, clp));
 }
 
+typedef struct {
+	const char	*sid_name;
+} scopeinfo_dynamic_t;
+
+scopeinfo_dynamic_t scopeinfo_groups[] = {
+    { .sid_name = "parameter" },
+    { .sid_name = "stack local variable" },
+    { .sid_name = "context local variable" }
+};
+
+/* ARGSUSED */
+static int
+dcmd_v8scopeinfo(uintptr_t addr, uint_t flags, int argc, const mdb_arg_t *argv)
+{
+	uintptr_t *scopeinfo;
+	size_t len, used;
+	/* XXX These need to be driven by V8 metadata. */
+	intptr_t si_first_variable = 4;
+	intptr_t si_paramcount = 1;
+	intptr_t si_stacklocalcount = 2;
+	intptr_t si_ctxlocalcount = 3;
+	unsigned long groupi, ngroups;
+	unsigned long vari, nvars;
+	char buf[64];
+	char *bufp;
+	size_t buflen;
+
+	if (read_heap_array(addr, &scopeinfo, &len, UM_SLEEP) != 0) {
+		mdb_warn("failed to read heap array for ScopeInfo\n");
+		return (DCMD_ERR);
+	}
+
+	if (len < si_first_variable) {
+		mdb_warn("array too short to be a ScopeInfo\n");
+		return (DCMD_ERR);
+	}
+
+	if (!V8_IS_SMI(scopeinfo[si_paramcount]) ||
+	    !V8_IS_SMI(scopeinfo[si_stacklocalcount]) ||
+	    !V8_IS_SMI(scopeinfo[si_ctxlocalcount])) {
+		mdb_warn("static ScopeInfo fields do not look like SMIs\n");
+		return (DCMD_ERR);
+	}
+
+	used = si_first_variable;
+	ngroups = sizeof (scopeinfo_groups) / sizeof (scopeinfo_groups[0]);
+	for (groupi = 0; groupi < ngroups; groupi++) {
+		/*
+		 * XXX This needs to be driven by V8 metadata rather than assume
+		 * these are in order.
+		 */
+		nvars = V8_SMI_VALUE(scopeinfo[groupi + 1]);
+		if (len < used + nvars) {
+			mdb_warn("array too short for %s\n",
+			    scopeinfo_groups[groupi].sid_name);
+			return (DCMD_ERR);
+		}
+
+		mdb_printf("%d %s%s\n", nvars,
+		    scopeinfo_groups[groupi].sid_name, nvars == 1 ? "" : "s");
+		for (vari = 0; vari < nvars; vari++) {
+			mdb_printf("    %s %d: %p",
+			    scopeinfo_groups[groupi].sid_name, vari,
+			    scopeinfo[used + vari]);
+
+			bufp = buf;
+			buflen = sizeof (buf);
+			if (jsstr_print(scopeinfo[used + vari], JSSTR_QUOTED,
+			    &bufp, &buflen) == 0) {
+				mdb_printf(" (%s)\n", buf);
+			} else {
+				mdb_printf("\n");
+			}
+		}
+
+		used += nvars;
+	}
+
+	return (DCMD_OK);
+}
+
+/*
+ * XXX Next steps:
+ *
+ * - add ::v8context, which is given a Context and prints out:
+ *   - a pointer to the closure (context[0])
+ *   - names and values of all context-local variables.  It gets these by
+ *     following the closure to its ScopeInfo and looking at context-locals.
+ * - add ::jsclosure, which is given a JSFunction, and basically prints out the
+ *   context-local variables.  Maybe recursive?
+ */
+
 /* ARGSUSED */
 static int
 dcmd_v8type(uintptr_t addr, uint_t flags, int argc, const mdb_arg_t *argv)
@@ -5841,6 +5933,8 @@ static const mdb_dcmd_t v8_mdb_dcmds[] = {
 		dcmd_v8print, dcmd_v8print_help },
 	{ "v8str", ":[-v]", "print the contents of a V8 string",
 		dcmd_v8str },
+	{ "v8scopeinfo", ":", "print information about a V8 ScopeInfo object",
+		dcmd_v8scopeinfo },
 	{ "v8type", ":", "print the type of a V8 heap object",
 		dcmd_v8type },
 	{ "v8types", NULL, "list known V8 heap object types",
