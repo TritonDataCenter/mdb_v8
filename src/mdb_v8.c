@@ -168,6 +168,12 @@ static intptr_t V8_ELEMENTS_FAST_ELEMENTS;
 static intptr_t V8_ELEMENTS_FAST_HOLEY_ELEMENTS;
 static intptr_t V8_ELEMENTS_DICTIONARY_ELEMENTS;
 
+static intptr_t V8_CONTEXT_NCOMMON;
+static intptr_t V8_CONTEXT_IDX_CLOSURE;
+static intptr_t V8_CONTEXT_IDX_PREV;
+static intptr_t V8_CONTEXT_IDX_EXT;
+static intptr_t V8_CONTEXT_IDX_GLOBAL;
+
 /*
  * Although we have this information in v8_classes, the following offsets are
  * defined explicitly because they're used directly in code below.
@@ -184,6 +190,7 @@ static ssize_t V8_OFF_HEAPOBJECT_MAP;
 static ssize_t V8_OFF_JSARRAY_LENGTH;
 static ssize_t V8_OFF_JSDATE_VALUE;
 static ssize_t V8_OFF_JSREGEXP_DATA;
+static ssize_t V8_OFF_JSFUNCTION_CONTEXT;
 static ssize_t V8_OFF_JSFUNCTION_SHARED;
 static ssize_t V8_OFF_JSOBJECT_ELEMENTS;
 static ssize_t V8_OFF_JSOBJECT_PROPERTIES;
@@ -204,6 +211,7 @@ static ssize_t V8_OFF_SEQASCIISTR_CHARS;
 static ssize_t V8_OFF_SEQONEBYTESTR_CHARS;
 static ssize_t V8_OFF_SEQTWOBYTESTR_CHARS;
 static ssize_t V8_OFF_SHAREDFUNCTIONINFO_CODE;
+static ssize_t V8_OFF_SHAREDFUNCTIONINFO_SCOPE_INFO;
 static ssize_t V8_OFF_SHAREDFUNCTIONINFO_END_POSITION;
 static ssize_t V8_OFF_SHAREDFUNCTIONINFO_FUNCTION_TOKEN_POSITION;
 static ssize_t V8_OFF_SHAREDFUNCTIONINFO_INFERRED_NAME;
@@ -328,6 +336,17 @@ static v8_constant_t v8_constants[] = {
 	{ &V8_ELEMENTS_DICTIONARY_ELEMENTS,
 	    "v8dbg_elements_dictionary_elements",
 	    V8_CONSTANT_FALLBACK(0, 0), 6 },
+
+	{ &V8_CONTEXT_NCOMMON, "v8dbg_context_ncommon",
+	    V8_CONSTANT_FALLBACK(0, 0), 4 },
+	{ &V8_CONTEXT_IDX_CLOSURE, "v8dbg_context_idx_closure",
+	    V8_CONSTANT_FALLBACK(0, 0), 0 },
+	{ &V8_CONTEXT_IDX_PREV, "v8dbg_context_idx_prev",
+	    V8_CONSTANT_FALLBACK(0, 0), 1 },
+	{ &V8_CONTEXT_IDX_EXT, "v8dbg_context_idx_ext",
+	    V8_CONSTANT_FALLBACK(0, 0), 2 },
+	{ &V8_CONTEXT_IDX_GLOBAL, "v8dbg_context_idx_global",
+	    V8_CONSTANT_FALLBACK(0, 0), 3 },
 };
 
 static int v8_nconstants = sizeof (v8_constants) / sizeof (v8_constants[0]);
@@ -362,6 +381,8 @@ static v8_offset_t v8_offsets[] = {
 	    "JSArray", "length" },
 	{ &V8_OFF_JSDATE_VALUE,
 	    "JSDate", "value", B_TRUE },
+	{ &V8_OFF_JSFUNCTION_CONTEXT,
+	    "JSFunction", "context", B_TRUE },
 	{ &V8_OFF_JSFUNCTION_SHARED,
 	    "JSFunction", "shared" },
 	{ &V8_OFF_JSOBJECT_ELEMENTS,
@@ -444,6 +465,22 @@ static void conf_class_compute_offsets(v8_class_t *);
 static int read_typebyte(uint8_t *, uintptr_t);
 static int heap_offset(const char *, const char *, ssize_t *);
 static int jsfunc_name(uintptr_t, char **, size_t *);
+
+/*
+ * In order to commonize code around reading and validating context information,
+ * we require that callers use v8context_load() in order to work with contexts.
+ */
+typedef struct {
+	uintptr_t	v8ctx_addr;
+	uintptr_t	*v8ctx_elts;
+	size_t		v8ctx_nelts;
+	int		v8ctx_error;
+} v8context_t;
+
+static int v8context_load(uintptr_t, v8context_t *, int);
+static unsigned int v8context_ncommon_slots(v8context_t *);
+static boolean_t v8context_is_func_ctx(v8context_t *);
+static uintptr_t v8context_prev_context(v8context_t *);
 
 /*
  * When iterating properties, it's useful to keep track of what kinds of
@@ -703,6 +740,20 @@ again:
 	if (V8_OFF_SLICEDSTRING_PARENT == -1)
 		V8_OFF_SLICEDSTRING_PARENT = V8_OFF_SLICEDSTRING_OFFSET -
 		    sizeof (uintptr_t);
+
+	if (V8_OFF_JSFUNCTION_CONTEXT == -1)
+		V8_OFF_JSFUNCTION_CONTEXT = V8_OFF_JSFUNCTION_SHARED +
+		    sizeof (uintptr_t);
+
+	if (V8_OFF_SHAREDFUNCTIONINFO_SCOPE_INFO == -1) {
+		if (heap_offset("SharedFunctionInfo", "optimized_code_map",
+		    &V8_OFF_SHAREDFUNCTIONINFO_SCOPE_INFO) == -1) {
+			V8_OFF_SHAREDFUNCTIONINFO_SCOPE_INFO = -1;
+		} else {
+			V8_OFF_SHAREDFUNCTIONINFO_SCOPE_INFO +=
+			    sizeof (uintptr_t);
+		}
+	}
 
 	/*
 	 * If we don't have bit_field/bit_field2 for Map, we know that they're
@@ -3665,6 +3716,45 @@ dcmd_v8print(uintptr_t addr, uint_t flags, int argc, const mdb_arg_t *argv)
 	return (obj_print_class(addr, clp));
 }
 
+static int
+v8context_load(uintptr_t addr, v8context_t *ctxp, int memflags)
+{
+	bzero(ctxp, sizeof (*ctxp));
+	ctxp->v8ctx_addr = addr;
+	ctxp->v8ctx_error = read_heap_array(addr,
+	    &ctxp->v8ctx_elts, &ctxp->v8ctx_nelts, memflags);
+
+	if (ctxp->v8ctx_error == 0 && ctxp->v8ctx_nelts < V8_CONTEXT_NCOMMON) {
+		mdb_warn("array too short to be a Context\n");
+		ctxp->v8ctx_error = -1;
+	}
+
+	return (ctxp->v8ctx_error);
+}
+
+static unsigned int
+v8context_ncommon_slots(v8context_t *ctxp)
+{
+	assert(ctxp->v8ctx_error == 0);
+	return (V8_CONTEXT_NCOMMON);
+}
+
+static boolean_t
+v8context_is_func_ctx(v8context_t *ctxp)
+{
+	assert(ctxp->v8ctx_error == 0);
+	return (v8context_prev_context(ctxp) != NULL);
+}
+
+static uintptr_t
+v8context_prev_context(v8context_t *ctxp)
+{
+	assert(ctxp->v8ctx_error == 0);
+	return (ctxp->v8ctx_elts[V8_CONTEXT_IDX_PREV]);
+}
+
+/* XXX v8context_free */
+
 typedef struct {
 	const char	*sid_name;
 } scopeinfo_dynamic_t;
@@ -3746,26 +3836,10 @@ dcmd_v8scopeinfo(uintptr_t addr, uint_t flags, int argc, const mdb_arg_t *argv)
 	return (DCMD_OK);
 }
 
-/*
- * XXX Next steps:
- *
- * - add ::v8context, which is given a Context and prints out:
- *   - a pointer to the closure (context[0])
- *   - names and values of all context-local variables.  It gets these by
- *     following the closure to its ScopeInfo and looking at context-locals.
- * - add ::jsclosure, which is given a JSFunction, and basically prints out the
- *   context-local variables.  Maybe recursive?
- */
-
 /* ARGSUSED */
 static int
 dcmd_v8context(uintptr_t addr, uint_t flags, int argc, const mdb_arg_t *argv)
 {
-	uintptr_t *context;
-	size_t len;
-	/* XXX These need to be driven by V8 metadata. */
-	intptr_t si_previous = 1;
-	intptr_t si_commonslots = 4;
 	char buf[64];
 	size_t bufsz, i;
 	char *bufp;
@@ -3775,39 +3849,39 @@ dcmd_v8context(uintptr_t addr, uint_t flags, int argc, const mdb_arg_t *argv)
 	    "extension",
 	    "global object"
 	};
+	v8context_t v8ctx;
 
-	if (read_heap_array(addr, &context, &len, UM_SLEEP | UM_GC) != 0) {
+	if (v8context_load(addr, &v8ctx, UM_SLEEP | UM_GC) != 0) {
 		mdb_warn("failed to read heap array for Context\n");
 		return (DCMD_ERR);
 	}
 
-	if (len < si_commonslots) {
-		mdb_warn("array too short to be a Context\n");
-		return (DCMD_ERR);
-	}
-
-	if (context[si_previous] != NULL) {
+	if (v8context_is_func_ctx(&v8ctx)) {
 		mdb_printf("function context:\n");
 	} else {
-		mdb_printf("\"with\" context:");
+		mdb_printf("\"with\" context:\n");
 	}
 
 	for (i = 0; i < sizeof (fields) / sizeof (fields[0]); i++) {
 		/* XXX offset should not be hardcoded this way */
-		mdb_printf("    %s: %p", fields[i], context[i]);
+		mdb_printf("    %s: %p", fields[i], v8ctx.v8ctx_elts[i]);
+
 		bufp = buf;
 		bufsz = sizeof (buf);
-		if (obj_jstype(context[i], &bufp, &bufsz, NULL) == 0)
+		if (obj_jstype(v8ctx.v8ctx_elts[i], &bufp, &bufsz, NULL) == 0)
 			mdb_printf(" (%s)\n", buf);
 		else
 			mdb_printf("\n");
 	}
 
-	for (; i < len; i++) {
-		mdb_printf("    slot %d: %p", i - si_commonslots, context[i]);
+	for (; i < v8ctx.v8ctx_nelts; i++) {
+		mdb_printf("    slot %d: %p",
+		    i - v8context_ncommon_slots(&v8ctx),
+		    v8ctx.v8ctx_elts[i]);
+
 		bufp = buf;
 		bufsz = sizeof (buf);
-		if (obj_jstype(context[i], &bufp, &bufsz, NULL) == 0)
+		if (obj_jstype(v8ctx.v8ctx_elts[i], &bufp, &bufsz, NULL) == 0)
 			mdb_printf(" (%s)\n", buf);
 		else
 			mdb_printf("\n");
