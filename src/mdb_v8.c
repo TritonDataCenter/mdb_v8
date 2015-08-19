@@ -507,6 +507,30 @@ static uintptr_t v8context_elt(v8context_t *, unsigned int);
 static size_t v8context_nelts(v8context_t *);
 
 /*
+ * This structure and array describe the statically-defined fields stored inside
+ * each Context.
+ */
+typedef struct {
+	const char	*v8ctxf_label;	/* name of field */
+	intptr_t	*v8ctxf_idxp;	/* ptr to index into context (array) */
+} v8context_field_t;
+
+static v8context_field_t v8context_fields[] = {
+	{ "closure function",	&V8_CONTEXT_IDX_CLOSURE },
+	{ "previous context",	&V8_CONTEXT_IDX_PREV },
+	{ "extension",		&V8_CONTEXT_IDX_EXT },
+	{ "global object",		&V8_CONTEXT_IDX_GLOBAL },
+};
+
+static size_t v8context_nfields =
+    sizeof (v8context_fields) / sizeof (v8context_fields[0]);
+
+static int v8context_iter_static_slots(v8context_t *,
+    int (*)(v8context_t *, const char *, uintptr_t, void *), void *);
+static int v8context_iter_dynamic_slots(v8context_t *,
+    int (*func)(v8context_t *, uint_t, uintptr_t, void *), void *);
+
+/*
  * We similarly abstract ScopeInfo objects.
  */
 typedef struct {
@@ -522,6 +546,12 @@ typedef enum {
 	V8SV_CONTEXTLOCALS
 } v8scopeinfo_vartype_t;
 
+/*
+ * This structure and array describe the layout of a ScopeInfo.  Each group
+ * describes a certain kind of variable, and the structures below include
+ * pointers to the field (inside a ScopeInfo) that stores the count of that kind
+ * of variable.
+ */
 typedef struct {
 	v8scopeinfo_vartype_t	v8sig_vartype;
 	const char		*v8sig_label;
@@ -529,20 +559,20 @@ typedef struct {
 } v8scopeinfo_group_t;
 
 static v8scopeinfo_group_t v8scopeinfo_groups[] = {
-    { V8SV_PARAMS, "parameter", &V8_SCOPEINFO_IDX_NPARAMS },
-    { V8SV_STACKLOCALS, "stack local variable",
-        &V8_SCOPEINFO_IDX_NSTACKLOCALS },
-    { V8SV_CONTEXTLOCALS, "context local variable",
-	&V8_SCOPEINFO_IDX_NCONTEXTLOCALS },
+	{ V8SV_PARAMS, "parameter", &V8_SCOPEINFO_IDX_NPARAMS },
+	{ V8SV_STACKLOCALS, "stack local variable",
+	    &V8_SCOPEINFO_IDX_NSTACKLOCALS },
+	{ V8SV_CONTEXTLOCALS, "context local variable",
+	    &V8_SCOPEINFO_IDX_NCONTEXTLOCALS },
 };
+
+static size_t v8scopeinfo_ngroups =
+    sizeof (v8scopeinfo_groups) / sizeof (v8scopeinfo_groups[0]);
 
 typedef struct {
 	size_t	v8siv_which;
 	size_t	v8siv_realidx;
 } v8scopeinfo_var_t;
-
-static size_t v8scopeinfo_ngroups =
-    sizeof (v8scopeinfo_groups) / sizeof (v8scopeinfo_groups[0]);
 
 static int v8scopeinfo_load(uintptr_t, v8scopeinfo_t *, int);
 static int v8scopeinfo_iter_groups(v8scopeinfo_t *,
@@ -3624,6 +3654,48 @@ v8context_scopeinfo(v8context_t *ctxp, v8scopeinfo_t *sip, int memflags)
 	return (v8function_scopeinfo(closure, sip, memflags));
 }
 
+static int
+v8context_iter_static_slots(v8context_t *ctxp,
+    int (*func)(v8context_t *, const char *, uintptr_t, void *), void *arg)
+{
+	unsigned int i;
+	intptr_t idx;
+	uintptr_t value;
+	v8context_field_t *fp;
+	int rv;
+
+	rv = 0;
+	for (i = 0; i < v8context_nfields; i++) {
+		fp = &v8context_fields[i];
+		idx = *(fp->v8ctxf_idxp);
+		value = v8context_elt(ctxp, idx);
+		rv = func(ctxp, fp->v8ctxf_label, value, arg);
+		if (rv != 0) {
+			break;
+		}
+	}
+
+	return (rv);
+}
+
+static int
+v8context_iter_dynamic_slots(v8context_t *ctxp,
+    int (*func)(v8context_t *, uint_t, uintptr_t, void *), void *arg)
+{
+	unsigned int nslots, i;
+	int rv = 0;
+
+	nslots = v8context_ncommon_slots(ctxp);
+	for (i = nslots; i < v8context_nelts(ctxp); i++) {
+		rv = func(ctxp, i - nslots, v8context_elt(ctxp, i), arg);
+		if (rv != 0) {
+			break;
+		}
+	}
+
+	return (rv);
+}
+
 /*
  * dcmd implementations
  */
@@ -3701,6 +3773,7 @@ dcmd_v8function(uintptr_t addr, uint_t flags, int argc, const mdb_arg_t *argv)
 {
 	uint8_t type;
 	uintptr_t funcinfop, scriptp, lendsp, tokpos, namep, codep;
+	uintptr_t contextp, scopeinfop;
 	char *bufp;
 	size_t len;
 	boolean_t opt_d = B_FALSE;
@@ -3729,6 +3802,10 @@ dcmd_v8function(uintptr_t addr, uint_t flags, int argc, const mdb_arg_t *argv)
 	    read_heap_ptr(&lendsp, scriptp, V8_OFF_SCRIPT_LINE_ENDS) != 0)
 		goto err;
 
+
+	if (read_heap_ptr(&contextp, addr, V8_OFF_JSFUNCTION_CONTEXT) != 0)
+		goto err;
+
 	/*
 	 * The token position is normally a SMI, so read_heap_maybesmi() will
 	 * interpret the value for us.  However, this code uses its SMI-encoded
@@ -3754,6 +3831,18 @@ dcmd_v8function(uintptr_t addr, uint_t flags, int argc, const mdb_arg_t *argv)
 		mdb_printf("%s", buf);
 
 	mdb_printf("\n");
+
+	mdb_printf("context: %p\n", contextp);
+	if (V8_OFF_SHAREDFUNCTIONINFO_SCOPE_INFO != -1) {
+		if (read_heap_ptr(&scopeinfop, funcinfop,
+		    V8_OFF_SHAREDFUNCTIONINFO_SCOPE_INFO) != 0) {
+			goto err;
+		}
+
+		mdb_printf("shared scope_info: %p\n", scopeinfop);
+	} else {
+		mdb_printf("shared scope_info not available\n");
+	}
 
 	if (read_heap_ptr(&codep,
 	    funcinfop, V8_OFF_SHAREDFUNCTIONINFO_CODE) != 0)
@@ -4039,21 +4128,16 @@ do_v8scopeinfo_var_print(v8scopeinfo_t *sip, v8scopeinfo_var_t *sivp, void *arg)
 	return (0);
 }
 
+
+static int do_v8context_static_slot(v8context_t *, const char *,
+    uintptr_t, void *);
+static int do_v8context_dynamic_slot(v8context_t *, uint_t, uintptr_t, void *);
+
 /* ARGSUSED */
 static int
 dcmd_v8context(uintptr_t addr, uint_t flags, int argc, const mdb_arg_t *argv)
 {
-	char buf[64];
-	size_t bufsz, i;
-	char *bufp;
-	char *fields[] = {
-	    "closure function",
-	    "previous context",
-	    "extension",
-	    "global object"
-	};
 	v8context_t ctx;
-	uintptr_t value;
 
 	if (v8context_load(addr, &ctx, UM_SLEEP | UM_GC) != 0) {
 		mdb_warn("failed to load Context\n");
@@ -4066,33 +4150,45 @@ dcmd_v8context(uintptr_t addr, uint_t flags, int argc, const mdb_arg_t *argv)
 		mdb_printf("\"with\" context:\n");
 	}
 
-	for (i = 0; i < sizeof (fields) / sizeof (fields[0]); i++) {
-		/* XXX offset should not be hardcoded this way */
-		value = v8context_elt(&ctx, i);
-		mdb_printf("    %s: %p", fields[i], value);
-
-		bufp = buf;
-		bufsz = sizeof (buf);
-		if (obj_jstype(value, &bufp, &bufsz, NULL) == 0)
-			mdb_printf(" (%s)\n", buf);
-		else
-			mdb_printf("\n");
-	}
-
-	for (; i < v8context_nelts(&ctx); i++) {
-		value = v8context_elt(&ctx, i);
-		mdb_printf("    slot %d: %p",
-		    i - v8context_ncommon_slots(&ctx), value);
-
-		bufp = buf;
-		bufsz = sizeof (buf);
-		if (obj_jstype(value, &bufp, &bufsz, NULL) == 0)
-			mdb_printf(" (%s)\n", buf);
-		else
-			mdb_printf("\n");
+	if (v8context_iter_static_slots(&ctx, do_v8context_static_slot,
+	    NULL) != 0 ||
+	    v8context_iter_dynamic_slots(&ctx, do_v8context_dynamic_slot,
+	    NULL) != 0) {
+		mdb_warn("failed to iterate context\n");
+		return (DCMD_ERR);
 	}
 
 	return (DCMD_OK);
+}
+
+static int
+do_v8context_static_slot(v8context_t *ctxp, const char *label, uintptr_t value,
+    void *arg)
+{
+	char buf[64];
+	char *bufp;
+	size_t bufsz;
+
+	mdb_printf("    %s: %p", label, value);
+
+	bufp = buf;
+	bufsz = sizeof (buf);
+	if (obj_jstype(value, &bufp, &bufsz, NULL) == 0) {
+		mdb_printf(" (%s)\n", buf);
+	} else {
+		mdb_printf("\n");
+	}
+
+	return (0);
+}
+
+static int
+do_v8context_dynamic_slot(v8context_t *ctxp, uint_t which, uintptr_t value,
+    void *arg)
+{
+	char buf[16];
+	(void) snprintf(buf, sizeof (buf), "slot %d", which);
+	return (do_v8context_static_slot(ctxp, buf, value, arg));
 }
 
 
