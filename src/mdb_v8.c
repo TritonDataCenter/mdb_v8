@@ -486,6 +486,9 @@ static int jsfunc_name(uintptr_t, char **, size_t *);
 /*
  * In order to commonize code around reading and validating context information,
  * we require that callers use v8context_load() in order to work with Contexts.
+ * TODO in the future, we will likely want to provide free() functions for
+ * v8context and v8scopeinfo, and those are going to need to know whether UM_GC
+ * was passed at load-time.
  */
 typedef struct {
 	uintptr_t	v8ctx_addr;
@@ -497,7 +500,9 @@ typedef struct {
 static int v8context_load(uintptr_t, v8context_t *, int);
 static unsigned int v8context_ncommon_slots(v8context_t *);
 static boolean_t v8context_is_func_ctx(v8context_t *);
+static uintptr_t v8context_closure(v8context_t *);
 static uintptr_t v8context_prev_context(v8context_t *);
+static uintptr_t v8context_var_value(v8context_t *, unsigned int);
 static uintptr_t v8context_elt(v8context_t *, unsigned int);
 static size_t v8context_nelts(v8context_t *);
 
@@ -546,8 +551,12 @@ static const char *v8scopeinfo_group_name(v8scopeinfo_vartype_t);
 static size_t v8scopeinfo_group_nvars(v8scopeinfo_t *, v8scopeinfo_vartype_t);
 static int v8scopeinfo_iter_vars(v8scopeinfo_t *, v8scopeinfo_vartype_t,
     int (*)(v8scopeinfo_t *, v8scopeinfo_var_t *, void *), void *);
-static uintptr_t v8scopeinfo_var_idx(v8scopeinfo_t *, v8scopeinfo_var_t *);
+static size_t v8scopeinfo_var_idx(v8scopeinfo_t *, v8scopeinfo_var_t *);
 static uintptr_t v8scopeinfo_var_name(v8scopeinfo_t *, v8scopeinfo_var_t *);
+
+static int v8function_context(uintptr_t, v8context_t *, int);
+static int v8function_scopeinfo(uintptr_t, v8scopeinfo_t *, int);
+
 
 /*
  * When iterating properties, it's useful to keep track of what kinds of
@@ -3493,8 +3502,6 @@ v8scopeinfo_load(uintptr_t addr, v8scopeinfo_t *sip, int flags)
 	return (sip->v8si_error);
 }
 
-/* XXX v8scopeinfo_free(), which needs to know the flags used? */
-
 static v8scopeinfo_group_t *
 v8scopeinfo_group_lookup(v8scopeinfo_vartype_t scopevartype)
 {
@@ -3596,7 +3603,7 @@ v8scopeinfo_iter_vars(v8scopeinfo_t *sip,
 	return (rv);
 }
 
-static uintptr_t
+static size_t
 v8scopeinfo_var_idx(v8scopeinfo_t *sip, v8scopeinfo_var_t *sivp)
 {
 	return (sivp->v8siv_which);
@@ -3610,85 +3617,11 @@ v8scopeinfo_var_name(v8scopeinfo_t *sip, v8scopeinfo_var_t *sivp)
 }
 
 static int
-v8scopeinfo_iter_ctx_names(uintptr_t addr, scopeinfo_var_func_t func, void *arg)
+v8context_scopeinfo(v8context_t *ctxp, v8scopeinfo_t *sip, int memflags)
 {
-	/* XXX commonize with ::v8context */
-	uintptr_t *scopeinfo;
-	size_t len;
-	unsigned int i, start;
-	/* XXX see comment in ::v8context */
-	intptr_t si_first_variable = 4;
-	intptr_t si_paramcount = 1;
-	intptr_t si_stacklocalcount = 2;
-	intptr_t si_ctxlocalcount = 3;
-	char buf[80];
-	char *bufp;
-	size_t buflen;
-	int rv;
-
-	if (read_heap_array(addr, &scopeinfo, &len, UM_SLEEP | UM_GC) != 0) {
-		mdb_warn("failed to read heap array for ScopeInfo\n");
-		return (DCMD_ERR);
-	}
-
-	if (len < si_first_variable) {
-		mdb_warn("array too short to be a ScopeInfo\n");
-		return (DCMD_ERR);
-	}
-
-	if (!V8_IS_SMI(scopeinfo[si_paramcount]) ||
-	    !V8_IS_SMI(scopeinfo[si_stacklocalcount]) ||
-	    !V8_IS_SMI(scopeinfo[si_ctxlocalcount])) {
-		mdb_warn("static ScopeInfo fields do not look like SMIs\n");
-		return (DCMD_ERR);
-	}
-	/* end duplicated in ::v8context */
-
-	start = si_first_variable +
-	    V8_SMI_VALUE(scopeinfo[si_paramcount]) +
-	    V8_SMI_VALUE(scopeinfo[si_stacklocalcount]);
-	rv = 0;
-	for (i = 0; i < V8_SMI_VALUE(scopeinfo[si_ctxlocalcount]); i++) {
-		bufp = buf;
-		buflen = sizeof (buf);
-		rv = jsstr_print(scopeinfo[start + i], JSSTR_QUOTED,
-		    &bufp, &buflen);
-		if (rv == 0)
-			rv = func(i, buf, arg);
-		if (rv != 0)
-			break;
-	}
-
-	return (rv);
-}
-
-static int
-v8context_scopeinfo(uintptr_t *scopeinfop, uintptr_t context)
-{
-	/* XXX validate and commonize with other functions */
-	uintptr_t closure, shared;
-	uintptr_t *contextelts;
-	size_t nelts;
-
-	if (V8_OFF_SHAREDFUNCTIONINFO_SCOPE_INFO == -1) {
-		mdb_warn("could not find \"scope_info\"");
-		return (-1);
-	}
-
-	/* XXX UM_GC? */
-	if (read_heap_array(context, &contextelts, &nelts,
-	    UM_SLEEP | UM_GC) != 0) {
-		return (-1);
-	}
-
-	closure = contextelts[0];
-	if (read_heap_ptr(&shared, closure, V8_OFF_JSFUNCTION_SHARED) != 0 ||
-	    read_heap_ptr(scopeinfop, shared,
-	    V8_OFF_SHAREDFUNCTIONINFO_SCOPE_INFO) != 0) {
-		return (-1);
-	}
-	
-	return (0);
+	uintptr_t closure;
+	closure = v8context_closure(ctxp);
+	return (v8function_scopeinfo(closure, sip, memflags));
 }
 
 /*
@@ -3957,10 +3890,24 @@ v8context_is_func_ctx(v8context_t *ctxp)
 }
 
 static uintptr_t
+v8context_closure(v8context_t *ctxp)
+{
+	assert(ctxp->v8ctx_error == 0);
+	return (v8context_elt(ctxp, V8_CONTEXT_IDX_CLOSURE));
+}
+
+static uintptr_t
 v8context_prev_context(v8context_t *ctxp)
 {
 	assert(ctxp->v8ctx_error == 0);
 	return (v8context_elt(ctxp, V8_CONTEXT_IDX_PREV));
+}
+
+static uintptr_t
+v8context_var_value(v8context_t *ctxp, unsigned int i)
+{
+	assert(ctxp->v8ctx_error == 0);
+	return (v8context_elt(ctxp, i + v8context_ncommon_slots(ctxp)));
 }
 
 static uintptr_t
@@ -3978,7 +3925,57 @@ v8context_nelts(v8context_t *ctxp)
 	return (ctxp->v8ctx_nelts);
 }
 
-/* XXX v8context_free */
+/*
+ * It would be nice to abstract this into something like v8function_load(), as
+ * we've done with v8context and v8scopeinfo.  That way, we could write other
+ * function-related operations in terms of this, and only have to validate it
+ * once.
+ */
+static int
+v8function_context(uintptr_t addr, v8context_t *ctxp, int memflags)
+{
+	uint8_t type;
+	const char *typename;
+	uintptr_t context;
+
+	if (!V8_IS_HEAPOBJECT(addr) || read_typebyte(&type, addr) != 0) {
+		v8_warn("%p: not a heap object\n", addr);
+		return (-1);
+	}
+
+	typename = enum_lookup_str(v8_types, type, "");
+	if (strcmp(typename, "JSFunction") != 0) {
+		v8_warn("%p: not a JSFunction\n", addr);
+		return (-1);
+	}
+
+	if (read_heap_ptr(&context, addr, V8_OFF_JSFUNCTION_CONTEXT) != 0) {
+		v8_warn("%p: failed to read context\n", addr);
+		return (-1);
+	}
+
+	return (v8context_load(context, ctxp, memflags));
+}
+
+static int
+v8function_scopeinfo(uintptr_t closure, v8scopeinfo_t *sip, int memflags)
+{
+	uintptr_t shared, scopeinfo;
+
+	if (V8_OFF_SHAREDFUNCTIONINFO_SCOPE_INFO == -1) {
+		v8_warn("could not find \"scope_info\"");
+		return (-1);
+	}
+
+	if (read_heap_ptr(&shared, closure, V8_OFF_JSFUNCTION_SHARED) != 0 ||
+	    read_heap_ptr(&scopeinfo, shared,
+	    V8_OFF_SHAREDFUNCTIONINFO_SCOPE_INFO) != 0 ||
+	    v8scopeinfo_load(scopeinfo, sip, memflags) != 0) {
+		return (-1);
+	}
+
+	return (0);
+}
 
 static int do_v8scopeinfo_group_print(v8scopeinfo_t *, v8scopeinfo_vartype_t,
     void *);
@@ -5569,22 +5566,44 @@ dcmd_nodebuffer(uintptr_t addr, uint_t flags, int argc,
 }
 
 static int
-jsclosure_ctx_variable(unsigned int idx, const char *name, void *arg)
+jsclosure_iter_var(v8scopeinfo_t *sip, v8scopeinfo_var_t *sivp, void *arg)
 {
-	uintptr_t *contextelts = arg;
-	uintptr_t val = contextelts[idx + 4]; /* XXX si_commonslots */
-	char buf[80];
-	char *bufp = buf;
-	size_t bufsz = sizeof (buf);
+	v8context_t *ctxp = arg;
+	uintptr_t namep, valp;
+	size_t validx, bufsz;
+	char buf[1024];
+	char *bufp;
+	jsobj_print_t jsop;
 
-	mdb_printf("%s: %p", name, val);
-	if (obj_jstype(val, &bufp, &bufsz, NULL) == 0) {
-		mdb_printf(" (%s)\n", buf);
-	} else {
-		mdb_printf("\n");
+	bufp = buf;
+	bufsz = sizeof (buf);
+	(void) bsnprintf(&bufp, &bufsz, "    ");
+	namep = v8scopeinfo_var_name(sip, sivp);
+	if (jsstr_print(namep, JSSTR_QUOTED, &bufp, &bufsz) != 0) {
+		return (-1);
 	}
 
-	/* XXX really need to commonize this with ::v8context */
+	validx = v8scopeinfo_var_idx(sip, sivp);
+	if (validx >= v8context_nelts(ctxp)) {
+		v8_warn("context %p: index %d is out of range\n",
+		    ctxp->v8ctx_addr, validx);
+		return (-1);
+	}
+
+	(void) bsnprintf(&bufp, &bufsz, ": ");
+
+	bzero(&jsop, sizeof (jsop));
+	jsop.jsop_depth = 1;
+	jsop.jsop_bufp = &bufp;
+	jsop.jsop_lenp = &bufsz;
+	jsop.jsop_indent = 4;
+	jsop.jsop_printaddr = B_TRUE;
+	valp = v8context_var_value(ctxp, validx);
+	if (jsobj_print(valp, &jsop) != 0) {
+		return (-1);
+	}
+
+	mdb_printf("%s\n", buf);
 	return (0);
 }
 
@@ -5592,38 +5611,23 @@ jsclosure_ctx_variable(unsigned int idx, const char *name, void *arg)
 static int
 dcmd_jsclosure(uintptr_t addr, uint_t flags, int argc, const mdb_arg_t *argv)
 {
-	const char *typename;
-	uint8_t type;
-	uintptr_t context, scopeinfo;
-	uintptr_t *contextelts;
-	size_t nelts;
+	v8context_t ctx;
+	v8scopeinfo_t scope;
+	int memflags = UM_SLEEP | UM_GC;
 
-	if (!V8_IS_HEAPOBJECT(addr) || read_typebyte(&type, addr) != 0) {
-		mdb_warn("%p is not a heap object\n", addr);
+	if (v8function_context(addr, &ctx, memflags) != 0) {
+		mdb_warn("%p: failed to load Context for JSFunction\n", addr);
 		return (DCMD_ERR);
 	}
 
-	typename = enum_lookup_str(v8_types, type, "");
-	if (strcmp(typename, "JSFunction") != 0) {
-		mdb_warn("%p is not a JSFunction\n", addr);
+	if (v8context_scopeinfo(&ctx, &scope, memflags) != 0) {
+		mdb_warn("%p: failed to load ScopeInfo\n", addr);
 		return (DCMD_ERR);
 	}
 
-	if (read_heap_ptr(&context, addr, V8_OFF_JSFUNCTION_CONTEXT) != 0 ||
-	    v8context_scopeinfo(&scopeinfo, context) != 0) {
-		mdb_warn("%p: failed to get ScopeInfo\n", addr);
-		return (DCMD_ERR);
-	}
-
-	/* XXX commonize with elsewhere */
-	if (read_heap_array(context, &contextelts, &nelts,
-	    UM_SLEEP | UM_GC) != 0) {
-		mdb_warn("failed to read heap array for Context\n");
-		return (DCMD_ERR);
-	}
-
-	if (v8scopeinfo_iter_ctx_names(scopeinfo, jsclosure_ctx_variable,
-	    contextelts) != 0) {
+	if (v8scopeinfo_iter_vars(&scope, V8SV_CONTEXTLOCALS,
+	    jsclosure_iter_var, &ctx) != 0) {
+		mdb_warn("%p: failed to iterate closure variables\n", addr);
 		return (DCMD_ERR);
 	}
 
