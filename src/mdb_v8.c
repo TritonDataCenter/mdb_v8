@@ -448,6 +448,8 @@ static v8_offset_t v8_offsets[] = {
 	    "SharedFunctionInfo", "length" },
 	{ &V8_OFF_SHAREDFUNCTIONINFO_NAME,
 	    "SharedFunctionInfo", "name" },
+	{ &V8_OFF_SHAREDFUNCTIONINFO_SCOPE_INFO,
+	    "SharedFunctionInfo", "scope_info", B_TRUE },
 	{ &V8_OFF_SHAREDFUNCTIONINFO_SCRIPT,
 	    "SharedFunctionInfo", "script" },
 	{ &V8_OFF_SLICEDSTRING_OFFSET,
