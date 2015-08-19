@@ -174,6 +174,11 @@ static intptr_t V8_CONTEXT_IDX_PREV;
 static intptr_t V8_CONTEXT_IDX_EXT;
 static intptr_t V8_CONTEXT_IDX_GLOBAL;
 
+static intptr_t V8_SCOPEINFO_IDX_NPARAMS;
+static intptr_t V8_SCOPEINFO_IDX_NSTACKLOCALS;
+static intptr_t V8_SCOPEINFO_IDX_NCONTEXTLOCALS;
+static intptr_t V8_SCOPEINFO_IDX_FIRST_VARS;
+
 /*
  * Although we have this information in v8_classes, the following offsets are
  * defined explicitly because they're used directly in code below.
@@ -347,6 +352,16 @@ static v8_constant_t v8_constants[] = {
 	    V8_CONSTANT_FALLBACK(0, 0), 2 },
 	{ &V8_CONTEXT_IDX_GLOBAL, "v8dbg_context_idx_global",
 	    V8_CONSTANT_FALLBACK(0, 0), 3 },
+
+	{ &V8_SCOPEINFO_IDX_NPARAMS, "v8dbg_scopeinfo_idx_nparams",
+	    V8_CONSTANT_FALLBACK(0, 0), 1 },
+	{ &V8_SCOPEINFO_IDX_NSTACKLOCALS, "v8dbg_scopeinfo_idx_nstacklocals",
+	    V8_CONSTANT_FALLBACK(0, 0), 2 },
+	{ &V8_SCOPEINFO_IDX_NCONTEXTLOCALS,
+	    "v8dbg_scopeinfo_idx_ncontextlocals",
+	    V8_CONSTANT_FALLBACK(0, 0), 3 },
+	{ &V8_SCOPEINFO_IDX_FIRST_VARS, "v8dbg_scopeinfo_idx_first_vars",
+	    V8_CONSTANT_FALLBACK(0, 0), 4 },
 };
 
 static int v8_nconstants = sizeof (v8_constants) / sizeof (v8_constants[0]);
@@ -468,7 +483,7 @@ static int jsfunc_name(uintptr_t, char **, size_t *);
 
 /*
  * In order to commonize code around reading and validating context information,
- * we require that callers use v8context_load() in order to work with contexts.
+ * we require that callers use v8context_load() in order to work with Contexts.
  */
 typedef struct {
 	uintptr_t	v8ctx_addr;
@@ -481,6 +496,56 @@ static int v8context_load(uintptr_t, v8context_t *, int);
 static unsigned int v8context_ncommon_slots(v8context_t *);
 static boolean_t v8context_is_func_ctx(v8context_t *);
 static uintptr_t v8context_prev_context(v8context_t *);
+static uintptr_t v8context_elt(v8context_t *, unsigned int);
+static size_t v8context_nelts(v8context_t *);
+
+/*
+ * We similarly abstract ScopeInfo objects.
+ */
+typedef struct {
+	uintptr_t	v8si_addr;
+	uintptr_t	*v8si_elts;
+	size_t		v8si_nelts;
+	int		v8si_error;
+} v8scopeinfo_t;
+
+typedef enum {
+	V8SV_PARAMS,
+	V8SV_STACKLOCALS,
+	V8SV_CONTEXTLOCALS
+} v8scopeinfo_vartype_t;
+
+typedef struct {
+	v8scopeinfo_vartype_t	v8sig_vartype;
+	const char		*v8sig_label;
+	intptr_t		*v8sig_idx_countp;
+} v8scopeinfo_group_t;
+
+static v8scopeinfo_group_t v8scopeinfo_groups[] = {
+    { V8SV_PARAMS, "parameter", &V8_SCOPEINFO_IDX_NPARAMS },
+    { V8SV_STACKLOCALS, "stack local variable",
+        &V8_SCOPEINFO_IDX_NSTACKLOCALS },
+    { V8SV_CONTEXTLOCALS, "context local variable",
+	&V8_SCOPEINFO_IDX_NCONTEXTLOCALS },
+};
+
+typedef struct {
+	size_t	v8siv_which;
+	size_t	v8siv_realidx;
+} v8scopeinfo_var_t;
+
+static size_t v8scopeinfo_ngroups =
+    sizeof (v8scopeinfo_groups) / sizeof (v8scopeinfo_groups[0]);
+
+static int v8scopeinfo_load(uintptr_t, v8scopeinfo_t *, int);
+static int v8scopeinfo_iter_groups(v8scopeinfo_t *,
+    int (*)(v8scopeinfo_t *, v8scopeinfo_vartype_t, void *), void *);
+static const char *v8scopeinfo_group_name(v8scopeinfo_vartype_t);
+static size_t v8scopeinfo_group_nvars(v8scopeinfo_t *, v8scopeinfo_vartype_t);
+static int v8scopeinfo_iter_vars(v8scopeinfo_t *, v8scopeinfo_vartype_t,
+    int (*)(v8scopeinfo_t *, v8scopeinfo_var_t *, void *), void *);
+static uintptr_t v8scopeinfo_var_idx(v8scopeinfo_t *, v8scopeinfo_var_t *);
+static uintptr_t v8scopeinfo_var_name(v8scopeinfo_t *, v8scopeinfo_var_t *);
 
 /*
  * When iterating properties, it's useful to keep track of what kinds of
@@ -3404,6 +3469,145 @@ jsobj_print_jsregexp(uintptr_t addr, jsobj_print_t *jsop)
 typedef int (*scopeinfo_var_func_t)(unsigned int, const char *, void *);
 
 static int
+v8scopeinfo_load(uintptr_t addr, v8scopeinfo_t *sip, int flags)
+{
+	bzero(sip, sizeof (*sip));
+	sip->v8si_addr = addr;
+	sip->v8si_error = read_heap_array(addr,
+	    &sip->v8si_elts, &sip->v8si_nelts, flags);
+
+	if (sip->v8si_error != 0) {
+		v8_warn("failed to read heap array for ScopeInfo\n");
+	} else if (sip->v8si_nelts < V8_SCOPEINFO_IDX_FIRST_VARS) {
+		v8_warn("array too short to be a ScopeInfo\n");
+		sip->v8si_error = -1;
+	} else if (!V8_IS_SMI(sip->v8si_elts[V8_SCOPEINFO_IDX_NPARAMS]) ||
+	    !V8_IS_SMI(sip->v8si_elts[V8_SCOPEINFO_IDX_NSTACKLOCALS]) ||
+	    !V8_IS_SMI(sip->v8si_elts[V8_SCOPEINFO_IDX_NCONTEXTLOCALS])) {
+		v8_warn("static ScopeInfo fields do not look like SMIs\n");
+		sip->v8si_error = -1;
+	}
+
+	return (sip->v8si_error);
+}
+
+/* XXX v8scopeinfo_free(), which needs to know the flags used? */
+
+static v8scopeinfo_group_t *
+v8scopeinfo_group_lookup(v8scopeinfo_vartype_t scopevartype)
+{
+	int i;
+	v8scopeinfo_group_t *sig;
+
+	for (i = 0; i < v8scopeinfo_ngroups; i++) {
+		sig = &v8scopeinfo_groups[i];
+		if (scopevartype == sig->v8sig_vartype)
+			return (sig);
+	}
+
+	return (NULL);
+}
+
+static const char *
+v8scopeinfo_group_name(v8scopeinfo_vartype_t scopevartype)
+{
+	v8scopeinfo_group_t *sig;
+
+	sig = v8scopeinfo_group_lookup(scopevartype);
+	assert(sig != NULL);
+	return (sig->v8sig_label);
+}
+
+static size_t
+v8scopeinfo_group_nvars(v8scopeinfo_t *sip, v8scopeinfo_vartype_t scopevartype)
+{
+	v8scopeinfo_group_t *sig;
+	uintptr_t value;
+
+	assert(sip->v8si_error == 0);
+	sig = v8scopeinfo_group_lookup(scopevartype);
+	assert(sig != NULL);
+	value = sip->v8si_elts[*(sig->v8sig_idx_countp)];
+	assert(V8_IS_SMI(value));
+	return (V8_SMI_VALUE(value));
+}
+
+static int
+v8scopeinfo_iter_groups(v8scopeinfo_t *sip,
+    int (*func)(v8scopeinfo_t *, v8scopeinfo_vartype_t, void *), void *arg)
+{
+	int i, rv;
+	v8scopeinfo_group_t *grp;
+
+	rv = 0;
+
+	for (i = 0; i < v8scopeinfo_ngroups; i++) {
+		grp = &v8scopeinfo_groups[i];
+		rv = func(sip, grp->v8sig_vartype, arg);
+		if (rv != 0)
+			break;
+	}
+
+	return (rv);
+}
+
+static int
+v8scopeinfo_iter_vars(v8scopeinfo_t *sip,
+    v8scopeinfo_vartype_t scopevartype,
+    int (*func)(v8scopeinfo_t *, v8scopeinfo_var_t *, void *), void *arg)
+{
+	int rv;
+	size_t i, nvars, nskip, idx;
+	v8scopeinfo_group_t *grp, *ogrp;
+	v8scopeinfo_var_t var;
+
+	grp = v8scopeinfo_group_lookup(scopevartype);
+	assert(grp != NULL);
+	nvars = v8scopeinfo_group_nvars(sip, scopevartype);
+
+	nskip = V8_SCOPEINFO_IDX_FIRST_VARS;
+	for (i = 0; i < v8scopeinfo_ngroups; i++) {
+		ogrp = &v8scopeinfo_groups[i];
+		if (*(ogrp->v8sig_idx_countp) >= *(grp->v8sig_idx_countp)) {
+			continue;
+		}
+
+		nskip += v8scopeinfo_group_nvars(sip, ogrp->v8sig_vartype);
+	}
+
+	rv = 0;
+	for (i = 0; i < nvars; i++) {
+		idx = nskip + i;
+		if (idx >= sip->v8si_nelts) {
+			v8_warn("v8scopeinfo_iter_vars: short scopeinfo\n");
+			return (-1);
+		}
+
+		var.v8siv_which = i;
+		var.v8siv_realidx = idx;
+		rv = func(sip, &var, arg);
+		if (rv != 0) {
+			break;
+		}
+	}
+
+	return (rv);
+}
+
+static uintptr_t
+v8scopeinfo_var_idx(v8scopeinfo_t *sip, v8scopeinfo_var_t *sivp)
+{
+	return (sivp->v8siv_which);
+}
+
+static uintptr_t
+v8scopeinfo_var_name(v8scopeinfo_t *sip, v8scopeinfo_var_t *sivp)
+{
+	assert(sivp->v8siv_realidx < sip->v8si_nelts);
+	return (sip->v8si_elts[sivp->v8siv_realidx]);
+}
+
+static int
 v8scopeinfo_iter_ctx_names(uintptr_t addr, scopeinfo_var_func_t func, void *arg)
 {
 	/* XXX commonize with ::v8context */
@@ -3463,7 +3667,11 @@ v8context_scopeinfo(uintptr_t *scopeinfop, uintptr_t context)
 	uintptr_t closure, shared;
 	uintptr_t *contextelts;
 	size_t nelts;
-	intptr_t V8_OFF_SHAREDFUNCTIONINFO_SCOPE_INFO = 0x10 - 1; /* XXX */
+
+	if (V8_OFF_SHAREDFUNCTIONINFO_SCOPE_INFO == -1) {
+		mdb_warn("could not find \"scope_info\"");
+		return (-1);
+	}
 
 	/* XXX UM_GC? */
 	if (read_heap_array(context, &contextelts, &nelts,
@@ -3725,7 +3933,7 @@ v8context_load(uintptr_t addr, v8context_t *ctxp, int memflags)
 	    &ctxp->v8ctx_elts, &ctxp->v8ctx_nelts, memflags);
 
 	if (ctxp->v8ctx_error == 0 && ctxp->v8ctx_nelts < V8_CONTEXT_NCOMMON) {
-		mdb_warn("array too short to be a Context\n");
+		v8_warn("array too short to be a Context\n");
 		ctxp->v8ctx_error = -1;
 	}
 
@@ -3750,90 +3958,86 @@ static uintptr_t
 v8context_prev_context(v8context_t *ctxp)
 {
 	assert(ctxp->v8ctx_error == 0);
-	return (ctxp->v8ctx_elts[V8_CONTEXT_IDX_PREV]);
+	return (v8context_elt(ctxp, V8_CONTEXT_IDX_PREV));
+}
+
+static uintptr_t
+v8context_elt(v8context_t *ctxp, unsigned int i)
+{
+	assert(ctxp->v8ctx_error == 0);
+	assert(i < ctxp->v8ctx_nelts);
+	return (ctxp->v8ctx_elts[i]);
+}
+
+static size_t
+v8context_nelts(v8context_t *ctxp)
+{
+	assert(ctxp->v8ctx_error == 0);
+	return (ctxp->v8ctx_nelts);
 }
 
 /* XXX v8context_free */
 
-typedef struct {
-	const char	*sid_name;
-} scopeinfo_dynamic_t;
-
-scopeinfo_dynamic_t scopeinfo_groups[] = {
-    { .sid_name = "parameter" },
-    { .sid_name = "stack local variable" },
-    { .sid_name = "context local variable" }
-};
+static int do_v8scopeinfo_group_print(v8scopeinfo_t *, v8scopeinfo_vartype_t,
+    void *);
+static int do_v8scopeinfo_var_print(v8scopeinfo_t *, v8scopeinfo_var_t *,
+    void *);
 
 /* ARGSUSED */
 static int
 dcmd_v8scopeinfo(uintptr_t addr, uint_t flags, int argc, const mdb_arg_t *argv)
 {
-	uintptr_t *scopeinfo;
-	size_t len, used;
-	/* XXX These need to be driven by V8 metadata. */
-	intptr_t si_first_variable = 4;
-	intptr_t si_paramcount = 1;
-	intptr_t si_stacklocalcount = 2;
-	intptr_t si_ctxlocalcount = 3;
-	unsigned long groupi, ngroups;
-	unsigned long vari, nvars;
+	v8scopeinfo_t si;
+
+	if (v8scopeinfo_load(addr, &si, UM_SLEEP | UM_GC) != 0) {
+		mdb_warn("failed to load ScopeInfo");
+		return (DCMD_ERR);
+	}
+
+	if (v8scopeinfo_iter_groups(&si, do_v8scopeinfo_group_print,
+	    NULL) != 0) {
+		mdb_warn("failed to walk scope info");
+		return (DCMD_ERR);
+	}
+
+	return (DCMD_OK);
+}
+
+static int do_v8scopeinfo_group_print(v8scopeinfo_t *sip,
+    v8scopeinfo_vartype_t scopevartype, void *arg)
+{
+	size_t nvars;
+	const char *label;
+
+	nvars = v8scopeinfo_group_nvars(sip, scopevartype);
+	label = v8scopeinfo_group_name(scopevartype);
+	mdb_printf("%d %s%s\n", nvars, label, nvars == 1 ? "" : "s");
+	return (v8scopeinfo_iter_vars(sip, scopevartype,
+	    do_v8scopeinfo_var_print, (void *)label));
+}
+
+static int
+do_v8scopeinfo_var_print(v8scopeinfo_t *sip, v8scopeinfo_var_t *sivp, void *arg)
+{
+	const char *label = arg;
+	uintptr_t namestr;
 	char buf[64];
 	char *bufp;
 	size_t buflen;
 
-	if (read_heap_array(addr, &scopeinfo, &len, UM_SLEEP | UM_GC) != 0) {
-		mdb_warn("failed to read heap array for ScopeInfo\n");
-		return (DCMD_ERR);
+	namestr = v8scopeinfo_var_name(sip, sivp);
+	mdb_printf("    %s %d: %p", label, v8scopeinfo_var_idx(sip, sivp),
+	    namestr);
+
+	bufp = buf;
+	buflen = sizeof (buf);
+	if (jsstr_print(namestr, JSSTR_QUOTED, &bufp, &buflen) == 0) {
+		mdb_printf(" (%s)\n", buf);
+	} else {
+		mdb_printf("\n");
 	}
 
-	if (len < si_first_variable) {
-		mdb_warn("array too short to be a ScopeInfo\n");
-		return (DCMD_ERR);
-	}
-
-	if (!V8_IS_SMI(scopeinfo[si_paramcount]) ||
-	    !V8_IS_SMI(scopeinfo[si_stacklocalcount]) ||
-	    !V8_IS_SMI(scopeinfo[si_ctxlocalcount])) {
-		mdb_warn("static ScopeInfo fields do not look like SMIs\n");
-		return (DCMD_ERR);
-	}
-
-	used = si_first_variable;
-	ngroups = sizeof (scopeinfo_groups) / sizeof (scopeinfo_groups[0]);
-	for (groupi = 0; groupi < ngroups; groupi++) {
-		/*
-		 * XXX This needs to be driven by V8 metadata rather than assume
-		 * these are in order.
-		 */
-		nvars = V8_SMI_VALUE(scopeinfo[groupi + 1]);
-		if (len < used + nvars) {
-			mdb_warn("array too short for %s\n",
-			    scopeinfo_groups[groupi].sid_name);
-			return (DCMD_ERR);
-		}
-
-		mdb_printf("%d %s%s\n", nvars,
-		    scopeinfo_groups[groupi].sid_name, nvars == 1 ? "" : "s");
-		for (vari = 0; vari < nvars; vari++) {
-			mdb_printf("    %s %d: %p",
-			    scopeinfo_groups[groupi].sid_name, vari,
-			    scopeinfo[used + vari]);
-
-			bufp = buf;
-			buflen = sizeof (buf);
-			if (jsstr_print(scopeinfo[used + vari], JSSTR_QUOTED,
-			    &bufp, &buflen) == 0) {
-				mdb_printf(" (%s)\n", buf);
-			} else {
-				mdb_printf("\n");
-			}
-		}
-
-		used += nvars;
-	}
-
-	return (DCMD_OK);
+	return (0);
 }
 
 /* ARGSUSED */
@@ -3849,14 +4053,15 @@ dcmd_v8context(uintptr_t addr, uint_t flags, int argc, const mdb_arg_t *argv)
 	    "extension",
 	    "global object"
 	};
-	v8context_t v8ctx;
+	v8context_t ctx;
+	uintptr_t value;
 
-	if (v8context_load(addr, &v8ctx, UM_SLEEP | UM_GC) != 0) {
-		mdb_warn("failed to read heap array for Context\n");
+	if (v8context_load(addr, &ctx, UM_SLEEP | UM_GC) != 0) {
+		mdb_warn("failed to load Context\n");
 		return (DCMD_ERR);
 	}
 
-	if (v8context_is_func_ctx(&v8ctx)) {
+	if (v8context_is_func_ctx(&ctx)) {
 		mdb_printf("function context:\n");
 	} else {
 		mdb_printf("\"with\" context:\n");
@@ -3864,24 +4069,25 @@ dcmd_v8context(uintptr_t addr, uint_t flags, int argc, const mdb_arg_t *argv)
 
 	for (i = 0; i < sizeof (fields) / sizeof (fields[0]); i++) {
 		/* XXX offset should not be hardcoded this way */
-		mdb_printf("    %s: %p", fields[i], v8ctx.v8ctx_elts[i]);
+		value = v8context_elt(&ctx, i);
+		mdb_printf("    %s: %p", fields[i], value);
 
 		bufp = buf;
 		bufsz = sizeof (buf);
-		if (obj_jstype(v8ctx.v8ctx_elts[i], &bufp, &bufsz, NULL) == 0)
+		if (obj_jstype(value, &bufp, &bufsz, NULL) == 0)
 			mdb_printf(" (%s)\n", buf);
 		else
 			mdb_printf("\n");
 	}
 
-	for (; i < v8ctx.v8ctx_nelts; i++) {
+	for (; i < v8context_nelts(&ctx); i++) {
+		value = v8context_elt(&ctx, i);
 		mdb_printf("    slot %d: %p",
-		    i - v8context_ncommon_slots(&v8ctx),
-		    v8ctx.v8ctx_elts[i]);
+		    i - v8context_ncommon_slots(&ctx), value);
 
 		bufp = buf;
 		bufsz = sizeof (buf);
-		if (obj_jstype(v8ctx.v8ctx_elts[i], &bufp, &bufsz, NULL) == 0)
+		if (obj_jstype(value, &bufp, &bufsz, NULL) == 0)
 			mdb_printf(" (%s)\n", buf);
 		else
 			mdb_printf("\n");
@@ -5401,7 +5607,6 @@ dcmd_jsclosure(uintptr_t addr, uint_t flags, int argc, const mdb_arg_t *argv)
 		return (DCMD_ERR);
 	}
 
-	intptr_t V8_OFF_JSFUNCTION_CONTEXT = 0x17; /* XXX */
 	if (read_heap_ptr(&context, addr, V8_OFF_JSFUNCTION_CONTEXT) != 0 ||
 	    v8context_scopeinfo(&scopeinfo, context) != 0) {
 		mdb_warn("%p: failed to get ScopeInfo\n", addr);
