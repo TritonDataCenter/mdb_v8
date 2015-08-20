@@ -3651,7 +3651,7 @@ dcmd_v8print(uintptr_t addr, uint_t flags, int argc, const mdb_arg_t *argv)
 	return (obj_print_class(addr, clp));
 }
 
-static int do_v8scopeinfo_group_print(v8scopeinfo_t *, v8scopeinfo_vartype_t,
+static int do_v8scopeinfo_vartype_print(v8scopeinfo_t *, v8scopeinfo_vartype_t,
     void *);
 static int do_v8scopeinfo_var_print(v8scopeinfo_t *, v8scopeinfo_var_t *,
     void *);
@@ -3667,7 +3667,7 @@ dcmd_v8scopeinfo(uintptr_t addr, uint_t flags, int argc, const mdb_arg_t *argv)
 		return (DCMD_ERR);
 	}
 
-	if (v8scopeinfo_iter_groups(sip, do_v8scopeinfo_group_print,
+	if (v8scopeinfo_iter_vartypes(sip, do_v8scopeinfo_vartype_print,
 	    NULL) != 0) {
 		mdb_warn("failed to walk scope info");
 		return (DCMD_ERR);
@@ -3676,14 +3676,14 @@ dcmd_v8scopeinfo(uintptr_t addr, uint_t flags, int argc, const mdb_arg_t *argv)
 	return (DCMD_OK);
 }
 
-static int do_v8scopeinfo_group_print(v8scopeinfo_t *sip,
+static int do_v8scopeinfo_vartype_print(v8scopeinfo_t *sip,
     v8scopeinfo_vartype_t scopevartype, void *arg)
 {
 	size_t nvars;
 	const char *label;
 
-	nvars = v8scopeinfo_group_nvars(sip, scopevartype);
-	label = v8scopeinfo_group_name(scopevartype);
+	nvars = v8scopeinfo_vartype_nvars(sip, scopevartype);
+	label = v8scopeinfo_vartype_name(scopevartype);
 	mdb_printf("%d %s%s\n", nvars, label, nvars == 1 ? "" : "s");
 	return (v8scopeinfo_iter_vars(sip, scopevartype,
 	    do_v8scopeinfo_var_print, (void *)label));
@@ -5283,11 +5283,17 @@ jsclosure_iter_var(v8scopeinfo_t *sip, v8scopeinfo_var_t *sivp, void *arg)
 static int
 dcmd_jsclosure(uintptr_t addr, uint_t flags, int argc, const mdb_arg_t *argv)
 {
+	v8function_t *funcp;
 	v8context_t *ctxp;
 	v8scopeinfo_t *sip;
 	int memflags = UM_SLEEP | UM_GC;
 
-	if ((ctxp = v8function_context(addr, memflags)) == NULL) {
+	if ((funcp = v8function_load(addr, memflags)) == NULL) {
+		mdb_warn("%p: failed to load JSFunction\n", addr);
+		return (DCMD_ERR);
+	}
+
+	if ((ctxp = v8function_context(funcp, memflags)) == NULL) {
 		mdb_warn("%p: failed to load Context for JSFunction\n", addr);
 		return (DCMD_ERR);
 	}

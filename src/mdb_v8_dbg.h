@@ -120,11 +120,11 @@ int v8context_iter_dynamic_slots(v8context_t *,
 v8scopeinfo_t *v8scopeinfo_load(uintptr_t, int);
 v8scopeinfo_t *v8context_scopeinfo(v8context_t *, int);
 
-int v8scopeinfo_iter_groups(v8scopeinfo_t *,
+int v8scopeinfo_iter_vartypes(v8scopeinfo_t *,
     int (*)(v8scopeinfo_t *, v8scopeinfo_vartype_t, void *), void *);
-const char *v8scopeinfo_group_name(v8scopeinfo_vartype_t);
+const char *v8scopeinfo_vartype_name(v8scopeinfo_vartype_t);
 
-size_t v8scopeinfo_group_nvars(v8scopeinfo_t *, v8scopeinfo_vartype_t);
+size_t v8scopeinfo_vartype_nvars(v8scopeinfo_t *, v8scopeinfo_vartype_t);
 int v8scopeinfo_iter_vars(v8scopeinfo_t *, v8scopeinfo_vartype_t,
     int (*)(v8scopeinfo_t *, v8scopeinfo_var_t *, void *), void *);
 size_t v8scopeinfo_var_idx(v8scopeinfo_t *, v8scopeinfo_var_t *);

@@ -53,10 +53,10 @@ struct v8scopeinfo {
 };
 
 /*
- * This structure and array describe the layout of a ScopeInfo.  Each group
- * describes a certain kind of variable, and the structures below include
- * pointers to the field (inside a ScopeInfo) that stores the count of that kind
- * of variable.
+ * This structure and array describe the layout of a ScopeInfo.  Each
+ * vartype_info describes a certain kind of variable, and the structures below
+ * include pointers to the field (inside a ScopeInfo) that stores the count of
+ * that kind of variable.
  */
 struct v8scopeinfo_var {
 	size_t	v8siv_which;
@@ -64,12 +64,12 @@ struct v8scopeinfo_var {
 };
 
 typedef struct {
-	v8scopeinfo_vartype_t	v8sig_vartype;
-	const char		*v8sig_label;
-	intptr_t		*v8sig_idx_countp;
-} v8scopeinfo_group_t;
+	v8scopeinfo_vartype_t	v8vti_vartype;
+	const char		*v8vti_label;
+	intptr_t		*v8vti_idx_countp;
+} v8scopeinfo_vartype_info_t;
 
-static v8scopeinfo_group_t v8scopeinfo_groups[] = {
+static v8scopeinfo_vartype_info_t v8scopeinfo_vartypes[] = {
 	{ V8SV_PARAMS, "parameter", &V8_SCOPEINFO_IDX_NPARAMS },
 	{ V8SV_STACKLOCALS, "stack local variable",
 	    &V8_SCOPEINFO_IDX_NSTACKLOCALS },
@@ -77,8 +77,8 @@ static v8scopeinfo_group_t v8scopeinfo_groups[] = {
 	    &V8_SCOPEINFO_IDX_NCONTEXTLOCALS },
 };
 
-static size_t v8scopeinfo_ngroups =
-    sizeof (v8scopeinfo_groups) / sizeof (v8scopeinfo_groups[0]);
+static size_t v8scopeinfo_nvartypes =
+    sizeof (v8scopeinfo_vartypes) / sizeof (v8scopeinfo_vartypes[0]);
 
 
 struct v8function {
@@ -91,7 +91,8 @@ struct v8function {
  */
 
 static uintptr_t v8context_elt(v8context_t *, unsigned int);
-static v8scopeinfo_group_t *v8scopeinfo_group_lookup(v8scopeinfo_vartype_t);
+static v8scopeinfo_vartype_info_t *v8scopeinfo_vartype_lookup(
+    v8scopeinfo_vartype_t);
 
 
 /*
@@ -305,23 +306,23 @@ err:
 }
 
 /*
- * Iterate the groups in a ScopeInfo, which correspond to different kinds of
+ * Iterate the vartypes in a ScopeInfo, which correspond to different kinds of
  * variable (e.g., "parameter", "stack-local variable", or "context-local
- * variable").  The caller gets an enum describing the group type, which can be
- * used to get the group name and iterate variables in this group.
+ * variable").  The caller gets an enum describing the vartype, which can be
+ * used to get the vartype name and iterate variables of this type.
  */
 int
-v8scopeinfo_iter_groups(v8scopeinfo_t *sip,
+v8scopeinfo_iter_vartypes(v8scopeinfo_t *sip,
     int (*func)(v8scopeinfo_t *, v8scopeinfo_vartype_t, void *), void *arg)
 {
 	int i, rv;
-	v8scopeinfo_group_t *grp;
+	v8scopeinfo_vartype_info_t *vtip;
 
 	rv = 0;
 
-	for (i = 0; i < v8scopeinfo_ngroups; i++) {
-		grp = &v8scopeinfo_groups[i];
-		rv = func(sip, grp->v8sig_vartype, arg);
+	for (i = 0; i < v8scopeinfo_nvartypes; i++) {
+		vtip = &v8scopeinfo_vartypes[i];
+		rv = func(sip, vtip->v8vti_vartype, arg);
 		if (rv != 0)
 			break;
 	}
@@ -334,34 +335,34 @@ v8scopeinfo_iter_groups(v8scopeinfo_t *sip,
  * variable must be valid.
  */
 const char *
-v8scopeinfo_group_name(v8scopeinfo_vartype_t scopevartype)
+v8scopeinfo_vartype_name(v8scopeinfo_vartype_t scopevartype)
 {
-	v8scopeinfo_group_t *sig;
+	v8scopeinfo_vartype_info_t *vtip;
 
-	sig = v8scopeinfo_group_lookup(scopevartype);
-	assert(sig != NULL);
-	return (sig->v8sig_label);
+	vtip = v8scopeinfo_vartype_lookup(scopevartype);
+	assert(vtip != NULL);
+	return (vtip->v8vti_label);
 }
 
 /*
- * Returns the number of variables in the given group (e.g., the number of
+ * Returns the number of variables of this kind (e.g., the number of
  * context-local variables, when scopevartype is V8SV_CONTEXTLOCALS).
  */
 size_t
-v8scopeinfo_group_nvars(v8scopeinfo_t *sip, v8scopeinfo_vartype_t scopevartype)
+v8scopeinfo_vartype_nvars(v8scopeinfo_t *sip, v8scopeinfo_vartype_t scopevartype)
 {
-	v8scopeinfo_group_t *sig;
+	v8scopeinfo_vartype_info_t *vtip;
 	uintptr_t value;
 
-	sig = v8scopeinfo_group_lookup(scopevartype);
-	assert(sig != NULL);
-	value = sip->v8si_elts[*(sig->v8sig_idx_countp)];
+	vtip = v8scopeinfo_vartype_lookup(scopevartype);
+	assert(vtip != NULL);
+	value = sip->v8si_elts[*(vtip->v8vti_idx_countp)];
 	assert(V8_IS_SMI(value));
 	return (V8_SMI_VALUE(value));
 }
 
 /*
- * Iterate the variables in the group specified by "scopevartype" (e.g.,
+ * Iterate the variables of the kind specified by "scopevartype" (e.g.,
  * context-local variables, when scopevartype is V8SV_CONTEXTLOCALS).  With each
  * variable, the caller gets an opaque pointer that can be used to get the
  * variable's name and an index for retrieving its value from a given context.
@@ -373,21 +374,21 @@ v8scopeinfo_iter_vars(v8scopeinfo_t *sip,
 {
 	int rv;
 	size_t i, nvars, nskip, idx;
-	v8scopeinfo_group_t *grp, *ogrp;
+	v8scopeinfo_vartype_info_t *vtip, *ogrp;
 	v8scopeinfo_var_t var;
 
-	grp = v8scopeinfo_group_lookup(scopevartype);
-	assert(grp != NULL);
-	nvars = v8scopeinfo_group_nvars(sip, scopevartype);
+	vtip = v8scopeinfo_vartype_lookup(scopevartype);
+	assert(vtip != NULL);
+	nvars = v8scopeinfo_vartype_nvars(sip, scopevartype);
 
 	nskip = V8_SCOPEINFO_IDX_FIRST_VARS;
-	for (i = 0; i < v8scopeinfo_ngroups; i++) {
-		ogrp = &v8scopeinfo_groups[i];
-		if (*(ogrp->v8sig_idx_countp) >= *(grp->v8sig_idx_countp)) {
+	for (i = 0; i < v8scopeinfo_nvartypes; i++) {
+		ogrp = &v8scopeinfo_vartypes[i];
+		if (*(ogrp->v8vti_idx_countp) >= *(vtip->v8vti_idx_countp)) {
 			continue;
 		}
 
-		nskip += v8scopeinfo_group_nvars(sip, ogrp->v8sig_vartype);
+		nskip += v8scopeinfo_vartype_nvars(sip, ogrp->v8vti_vartype);
 	}
 
 	rv = 0;
@@ -430,18 +431,18 @@ v8scopeinfo_var_name(v8scopeinfo_t *sip, v8scopeinfo_var_t *sivp)
 }
 
 /*
- * Look up our internal metadata for this group.
+ * Look up our internal metadata for this vartype.
  */
-static v8scopeinfo_group_t *
-v8scopeinfo_group_lookup(v8scopeinfo_vartype_t scopevartype)
+static v8scopeinfo_vartype_info_t *
+v8scopeinfo_vartype_lookup(v8scopeinfo_vartype_t scopevartype)
 {
 	int i;
-	v8scopeinfo_group_t *sig;
+	v8scopeinfo_vartype_info_t *vtip;
 
-	for (i = 0; i < v8scopeinfo_ngroups; i++) {
-		sig = &v8scopeinfo_groups[i];
-		if (scopevartype == sig->v8sig_vartype)
-			return (sig);
+	for (i = 0; i < v8scopeinfo_nvartypes; i++) {
+		vtip = &v8scopeinfo_vartypes[i];
+		if (scopevartype == vtip->v8vti_vartype)
+			return (vtip);
 	}
 
 	return (NULL);
