@@ -39,6 +39,23 @@
 #define	_MDBV8DBG_H
 
 /*
+ * Basic types
+ */
+
+typedef struct v8function v8function_t;
+
+typedef struct v8context v8context_t;
+typedef struct v8scopeinfo v8scopeinfo_t;
+typedef struct v8scopeinfo_var v8scopeinfo_var_t;
+
+typedef enum {
+	V8SV_PARAMS,
+	V8SV_STACKLOCALS,
+	V8SV_CONTEXTLOCALS
+} v8scopeinfo_vartype_t;
+
+
+/*
  * Contexts, closures, and ScopeInfo objects
  *
  * Each JavaScript closure (an instance of the V8 "JSFunction" class) has its
@@ -82,20 +99,16 @@
  * have a way to free these.
  */
 
+
 /*
  * Working with Contexts
  */
-
-typedef struct v8context v8context_t;
 
 v8context_t *v8context_load(uintptr_t, int);
 uintptr_t v8context_closure(v8context_t *);
 uintptr_t v8context_prev_context(v8context_t *);
 int v8context_var_value(v8context_t *, unsigned int, uintptr_t *);
 
-/*
- * Low-level Context details
- */
 int v8context_iter_static_slots(v8context_t *,
     int (*)(v8context_t *, const char *, uintptr_t, void *), void *);
 int v8context_iter_dynamic_slots(v8context_t *,
@@ -104,17 +117,6 @@ int v8context_iter_dynamic_slots(v8context_t *,
 /*
  * Working with ScopeInfo objects
  */
-
-typedef struct v8scopeinfo v8scopeinfo_t;
-
-typedef enum {
-	V8SV_PARAMS,
-	V8SV_STACKLOCALS,
-	V8SV_CONTEXTLOCALS
-} v8scopeinfo_vartype_t;
-
-typedef struct v8scopeinfo_var v8scopeinfo_var_t;
-
 v8scopeinfo_t *v8scopeinfo_load(uintptr_t, int);
 v8scopeinfo_t *v8context_scopeinfo(v8context_t *, int);
 
@@ -128,7 +130,18 @@ int v8scopeinfo_iter_vars(v8scopeinfo_t *, v8scopeinfo_vartype_t,
 size_t v8scopeinfo_var_idx(v8scopeinfo_t *, v8scopeinfo_var_t *);
 uintptr_t v8scopeinfo_var_name(v8scopeinfo_t *, v8scopeinfo_var_t *);
 
-v8context_t *v8function_context(uintptr_t, int);
-v8scopeinfo_t *v8function_scopeinfo(uintptr_t, int);
+/*
+ * Working with JSFunction objects
+ *
+ * JSFunction objects represent closures, rather than a single instance of the
+ * function in the source code.  There may be many JSFunction objects for what
+ * programmers would typically call a "function" -- one for each active closure.
+ * Most of the JSFunction-related facilities have not yet been folded into this
+ * interface.
+ */
+v8function_t *v8function_load(uintptr_t, int);
+void v8function_free(v8function_t *);
+v8context_t *v8function_context(v8function_t *, int);
+v8scopeinfo_t *v8function_scopeinfo(v8function_t *, int);
 
 #endif /* _MDBV8DBG_H */

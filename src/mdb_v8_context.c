@@ -80,6 +80,12 @@ static v8scopeinfo_group_t v8scopeinfo_groups[] = {
 static size_t v8scopeinfo_ngroups =
     sizeof (v8scopeinfo_groups) / sizeof (v8scopeinfo_groups[0]);
 
+
+struct v8function {
+	uintptr_t	v8func_addr;	/* JSFunction address in target proc */
+	int		v8func_memflags;	/* allocation flags */
+};
+
 /*
  * Local utility function declarations.
  */
@@ -172,8 +178,14 @@ v8scopeinfo_t *
 v8context_scopeinfo(v8context_t *ctxp, int memflags)
 {
 	uintptr_t closure;
+	v8function_t *funcp;
+	v8scopeinfo_t *sip;
+
 	closure = v8context_closure(ctxp);
-	return (v8function_scopeinfo(closure, memflags));
+	funcp = v8function_load(closure, memflags);
+	sip = v8function_scopeinfo(funcp, memflags);
+	v8function_free(funcp);
+	return (sip);
 }
 
 /*
@@ -438,24 +450,17 @@ v8scopeinfo_group_lookup(v8scopeinfo_vartype_t scopevartype)
 
 /*
  * JSFunction functions
- *
- * XXX It would be nice to abstract functions into a v8function_t (analogous to
- * what we've done with v8context and v8scopeinfo).  That way, we could write
- * other function-related operations in terms of this, and only have to validate
- * it once.
  */
 
 /*
- * Given a JSFunction in "addr", load into "ctxp" the context associated with
- * this function.  This is a convenience function that validates the JSFunction,
- * finds the context, and calls v8context_load(), so see the notes about that
- * function.
+ * Given a JSFunction pointer in "addr", validates the pointer and returns a
+ * v8function_t that can be used for working with the function.
  */
-v8context_t *
-v8function_context(uintptr_t addr, int memflags)
+v8function_t *
+v8function_load(uintptr_t addr, int memflags)
 {
 	uint8_t type;
-	uintptr_t context;
+	v8function_t *funcp;
 
 	if (!V8_IS_HEAPOBJECT(addr) || read_typebyte(&type, addr) != 0) {
 		v8_warn("%p: not a heap object\n", addr);
@@ -467,6 +472,26 @@ v8function_context(uintptr_t addr, int memflags)
 		return (NULL);
 	}
 
+	if ((funcp = mdb_zalloc(sizeof (*funcp), memflags)) == NULL) {
+		return (NULL);
+	}
+
+	funcp->v8func_addr = addr;
+	funcp->v8func_memflags = memflags;
+	return (funcp);
+}
+
+/*
+ * Given a JSFunction in "funcp", load into "ctxp" the context associated with
+ * this function.  This is a convenience function that finds the context and
+ * calls v8context_load(), so see the notes about that function.
+ */
+v8context_t *
+v8function_context(v8function_t *funcp, int memflags)
+{
+	uintptr_t addr, context;
+	
+	addr = funcp->v8func_addr;
 	if (read_heap_ptr(&context, addr, V8_OFF_JSFUNCTION_CONTEXT) != 0) {
 		v8_warn("%p: failed to read context\n", addr);
 		return (NULL);
@@ -476,7 +501,7 @@ v8function_context(uintptr_t addr, int memflags)
 }
 
 /*
- * Given a JSFunction in "addr", load the ScopeInfo associated with this
+ * Given a JSFunction in "funcp", load the ScopeInfo associated with this
  * function.  This is a convenience function that ultimately calls
  * v8scopeinfo_load(), so see the notes about that function.
  *
@@ -487,15 +512,16 @@ v8function_context(uintptr_t addr, int memflags)
  * v8function_context() and then v8context_scopeinfo().)
  */
 v8scopeinfo_t *
-v8function_scopeinfo(uintptr_t closure, int memflags)
+v8function_scopeinfo(v8function_t *funcp, int memflags)
 {
-	uintptr_t shared, scopeinfo;
+	uintptr_t closure, shared, scopeinfo;
 
 	if (V8_OFF_SHAREDFUNCTIONINFO_SCOPE_INFO == -1) {
 		v8_warn("could not find \"scope_info\"");
 		return (NULL);
 	}
 
+	closure = funcp->v8func_addr;
 	if (read_heap_ptr(&shared, closure, V8_OFF_JSFUNCTION_SHARED) != 0 ||
 	    read_heap_ptr(&scopeinfo, shared,
 	    V8_OFF_SHAREDFUNCTIONINFO_SCOPE_INFO) != 0) {
@@ -503,4 +529,10 @@ v8function_scopeinfo(uintptr_t closure, int memflags)
 	}
 
 	return (v8scopeinfo_load(scopeinfo, memflags));
+}
+
+void
+v8function_free(v8function_t *funcp)
+{
+	maybefree(funcp, sizeof (*funcp), funcp->v8func_memflags);
 }
