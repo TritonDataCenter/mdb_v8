@@ -20,17 +20,8 @@
  * their corresponding repositories.
  */
 
-/*
- * We hard-code our MDB_API_VERSION to be 3 to allow this module to be
- * compiled on systems with higher version numbers, but still allow the
- * resulting binary object to be used on older systems.  (We do not make use
- * of functionality present in versions later than 3.)  This is particularly
- * important for mdb_v8 because (1) it's used in particular to debug
- * application-level software and (2) it has a history of rapid evolution.
- */
-#define	MDB_API_VERSION		3
+#include "mdb_v8_impl.h"
 
-#include <sys/mdb_modapi.h>
 #include <assert.h>
 #include <ctype.h>
 #include <inttypes.h>
@@ -44,6 +35,7 @@
 #include "v8dbg.h"
 #include "v8cfg.h"
 #include "mdb_v8_version.h"
+#include "mdb_v8_dbg.h"
 
 #define	offsetof(s, m)	((size_t)(&(((s *)0)->m)))
 
@@ -111,27 +103,27 @@ static ssize_t	V8_OFF_FP_ARGS;
  * be preferred to using the constants directly.  The values of these constants
  * are initialized from the debug metadata.
  */
-static intptr_t	V8_FirstNonstringType;
-static intptr_t	V8_IsNotStringMask;
-static intptr_t	V8_StringTag;
-static intptr_t	V8_NotStringTag;
-static intptr_t	V8_StringEncodingMask;
-static intptr_t	V8_TwoByteStringTag;
-static intptr_t	V8_AsciiStringTag;
-static intptr_t	V8_StringRepresentationMask;
-static intptr_t	V8_SeqStringTag;
-static intptr_t	V8_ConsStringTag;
-static intptr_t	V8_SlicedStringTag;
-static intptr_t	V8_ExternalStringTag;
-static intptr_t	V8_FailureTag;
-static intptr_t	V8_FailureTagMask;
-static intptr_t	V8_HeapObjectTag;
-static intptr_t	V8_HeapObjectTagMask;
-static intptr_t	V8_SmiTag;
-static intptr_t	V8_SmiTagMask;
-static intptr_t	V8_SmiValueShift;
-static intptr_t	V8_SmiShiftSize;
-static intptr_t	V8_PointerSizeLog2;
+intptr_t V8_FirstNonstringType;
+intptr_t V8_IsNotStringMask;
+intptr_t V8_StringTag;
+intptr_t V8_NotStringTag;
+intptr_t V8_StringEncodingMask;
+intptr_t V8_TwoByteStringTag;
+intptr_t V8_AsciiStringTag;
+intptr_t V8_StringRepresentationMask;
+intptr_t V8_SeqStringTag;
+intptr_t V8_ConsStringTag;
+intptr_t V8_SlicedStringTag;
+intptr_t V8_ExternalStringTag;
+intptr_t V8_FailureTag;
+intptr_t V8_FailureTagMask;
+intptr_t V8_HeapObjectTag;
+intptr_t V8_HeapObjectTagMask;
+intptr_t V8_SmiTag;
+intptr_t V8_SmiTagMask;
+intptr_t V8_SmiValueShift;
+intptr_t V8_SmiShiftSize;
+intptr_t V8_PointerSizeLog2;
 
 static intptr_t	V8_ISSHARED_SHIFT;
 static intptr_t	V8_DICT_SHIFT;
@@ -150,17 +142,17 @@ static intptr_t	V8_PROP_DESC_VALUE;
 static intptr_t	V8_PROP_DESC_SIZE;
 static intptr_t	V8_TRANSITIONS_IDX_DESC;
 
-static intptr_t V8_TYPE_ACCESSORINFO = -1;
-static intptr_t V8_TYPE_ACCESSORPAIR = -1;
-static intptr_t V8_TYPE_EXECUTABLEACCESSORINFO = -1;
-static intptr_t V8_TYPE_JSOBJECT = -1;
-static intptr_t V8_TYPE_JSARRAY = -1;
-static intptr_t V8_TYPE_JSFUNCTION = -1;
-static intptr_t V8_TYPE_JSDATE = -1;
-static intptr_t V8_TYPE_JSREGEXP = -1;
-static intptr_t V8_TYPE_HEAPNUMBER = -1;
-static intptr_t V8_TYPE_ODDBALL = -1;
-static intptr_t V8_TYPE_FIXEDARRAY = -1;
+intptr_t V8_TYPE_ACCESSORINFO = -1;
+intptr_t V8_TYPE_ACCESSORPAIR = -1;
+intptr_t V8_TYPE_EXECUTABLEACCESSORINFO = -1;
+intptr_t V8_TYPE_JSOBJECT = -1;
+intptr_t V8_TYPE_JSARRAY = -1;
+intptr_t V8_TYPE_JSFUNCTION = -1;
+intptr_t V8_TYPE_JSDATE = -1;
+intptr_t V8_TYPE_JSREGEXP = -1;
+intptr_t V8_TYPE_HEAPNUMBER = -1;
+intptr_t V8_TYPE_ODDBALL = -1;
+intptr_t V8_TYPE_FIXEDARRAY = -1;
 
 static intptr_t V8_ELEMENTS_KIND_SHIFT;
 static intptr_t V8_ELEMENTS_KIND_BITCOUNT;
@@ -168,51 +160,64 @@ static intptr_t V8_ELEMENTS_FAST_ELEMENTS;
 static intptr_t V8_ELEMENTS_FAST_HOLEY_ELEMENTS;
 static intptr_t V8_ELEMENTS_DICTIONARY_ELEMENTS;
 
+intptr_t V8_CONTEXT_NCOMMON;
+intptr_t V8_CONTEXT_IDX_CLOSURE;
+intptr_t V8_CONTEXT_IDX_PREV;
+intptr_t V8_CONTEXT_IDX_EXT;
+intptr_t V8_CONTEXT_IDX_GLOBAL;
+
+intptr_t V8_SCOPEINFO_IDX_NPARAMS;
+intptr_t V8_SCOPEINFO_IDX_NSTACKLOCALS;
+intptr_t V8_SCOPEINFO_IDX_NCONTEXTLOCALS;
+intptr_t V8_SCOPEINFO_IDX_FIRST_VARS;
+
 /*
  * Although we have this information in v8_classes, the following offsets are
  * defined explicitly because they're used directly in code below.
  */
-static ssize_t V8_OFF_CODE_INSTRUCTION_SIZE;
-static ssize_t V8_OFF_CODE_INSTRUCTION_START;
-static ssize_t V8_OFF_CONSSTRING_FIRST;
-static ssize_t V8_OFF_CONSSTRING_SECOND;
-static ssize_t V8_OFF_EXTERNALSTRING_RESOURCE;
-static ssize_t V8_OFF_FIXEDARRAY_DATA;
-static ssize_t V8_OFF_FIXEDARRAY_LENGTH;
-static ssize_t V8_OFF_HEAPNUMBER_VALUE;
-static ssize_t V8_OFF_HEAPOBJECT_MAP;
-static ssize_t V8_OFF_JSARRAY_LENGTH;
-static ssize_t V8_OFF_JSDATE_VALUE;
-static ssize_t V8_OFF_JSREGEXP_DATA;
-static ssize_t V8_OFF_JSFUNCTION_SHARED;
-static ssize_t V8_OFF_JSOBJECT_ELEMENTS;
-static ssize_t V8_OFF_JSOBJECT_PROPERTIES;
-static ssize_t V8_OFF_MAP_CONSTRUCTOR;
-static ssize_t V8_OFF_MAP_INOBJECT_PROPERTIES;
-static ssize_t V8_OFF_MAP_INSTANCE_ATTRIBUTES;
-static ssize_t V8_OFF_MAP_INSTANCE_DESCRIPTORS;
-static ssize_t V8_OFF_MAP_INSTANCE_SIZE;
-static ssize_t V8_OFF_MAP_BIT_FIELD;
-static ssize_t V8_OFF_MAP_BIT_FIELD2;
-static ssize_t V8_OFF_MAP_BIT_FIELD3;
-static ssize_t V8_OFF_MAP_TRANSITIONS;
-static ssize_t V8_OFF_ODDBALL_TO_STRING;
-static ssize_t V8_OFF_SCRIPT_LINE_ENDS;
-static ssize_t V8_OFF_SCRIPT_NAME;
-static ssize_t V8_OFF_SCRIPT_SOURCE;
-static ssize_t V8_OFF_SEQASCIISTR_CHARS;
-static ssize_t V8_OFF_SEQONEBYTESTR_CHARS;
-static ssize_t V8_OFF_SEQTWOBYTESTR_CHARS;
-static ssize_t V8_OFF_SHAREDFUNCTIONINFO_CODE;
-static ssize_t V8_OFF_SHAREDFUNCTIONINFO_END_POSITION;
-static ssize_t V8_OFF_SHAREDFUNCTIONINFO_FUNCTION_TOKEN_POSITION;
-static ssize_t V8_OFF_SHAREDFUNCTIONINFO_INFERRED_NAME;
-static ssize_t V8_OFF_SHAREDFUNCTIONINFO_LENGTH;
-static ssize_t V8_OFF_SHAREDFUNCTIONINFO_SCRIPT;
-static ssize_t V8_OFF_SHAREDFUNCTIONINFO_NAME;
-static ssize_t V8_OFF_SLICEDSTRING_PARENT;
-static ssize_t V8_OFF_SLICEDSTRING_OFFSET;
-static ssize_t V8_OFF_STRING_LENGTH;
+ssize_t V8_OFF_CODE_INSTRUCTION_SIZE;
+ssize_t V8_OFF_CODE_INSTRUCTION_START;
+ssize_t V8_OFF_CONSSTRING_FIRST;
+ssize_t V8_OFF_CONSSTRING_SECOND;
+ssize_t V8_OFF_EXTERNALSTRING_RESOURCE;
+ssize_t V8_OFF_FIXEDARRAY_DATA;
+ssize_t V8_OFF_FIXEDARRAY_LENGTH;
+ssize_t V8_OFF_HEAPNUMBER_VALUE;
+ssize_t V8_OFF_HEAPOBJECT_MAP;
+ssize_t V8_OFF_JSARRAY_LENGTH;
+ssize_t V8_OFF_JSDATE_VALUE;
+ssize_t V8_OFF_JSREGEXP_DATA;
+ssize_t V8_OFF_JSFUNCTION_CONTEXT;
+ssize_t V8_OFF_JSFUNCTION_SHARED;
+ssize_t V8_OFF_JSOBJECT_ELEMENTS;
+ssize_t V8_OFF_JSOBJECT_PROPERTIES;
+ssize_t V8_OFF_MAP_CONSTRUCTOR;
+ssize_t V8_OFF_MAP_INOBJECT_PROPERTIES;
+ssize_t V8_OFF_MAP_INSTANCE_ATTRIBUTES;
+ssize_t V8_OFF_MAP_INSTANCE_DESCRIPTORS;
+ssize_t V8_OFF_MAP_INSTANCE_SIZE;
+ssize_t V8_OFF_MAP_BIT_FIELD;
+ssize_t V8_OFF_MAP_BIT_FIELD2;
+ssize_t V8_OFF_MAP_BIT_FIELD3;
+ssize_t V8_OFF_MAP_TRANSITIONS;
+ssize_t V8_OFF_ODDBALL_TO_STRING;
+ssize_t V8_OFF_SCRIPT_LINE_ENDS;
+ssize_t V8_OFF_SCRIPT_NAME;
+ssize_t V8_OFF_SCRIPT_SOURCE;
+ssize_t V8_OFF_SEQASCIISTR_CHARS;
+ssize_t V8_OFF_SEQONEBYTESTR_CHARS;
+ssize_t V8_OFF_SEQTWOBYTESTR_CHARS;
+ssize_t V8_OFF_SHAREDFUNCTIONINFO_CODE;
+ssize_t V8_OFF_SHAREDFUNCTIONINFO_SCOPE_INFO;
+ssize_t V8_OFF_SHAREDFUNCTIONINFO_END_POSITION;
+ssize_t V8_OFF_SHAREDFUNCTIONINFO_FUNCTION_TOKEN_POSITION;
+ssize_t V8_OFF_SHAREDFUNCTIONINFO_INFERRED_NAME;
+ssize_t V8_OFF_SHAREDFUNCTIONINFO_LENGTH;
+ssize_t V8_OFF_SHAREDFUNCTIONINFO_SCRIPT;
+ssize_t V8_OFF_SHAREDFUNCTIONINFO_NAME;
+ssize_t V8_OFF_SLICEDSTRING_PARENT;
+ssize_t V8_OFF_SLICEDSTRING_OFFSET;
+ssize_t V8_OFF_STRING_LENGTH;
 
 /* see node_string.h */
 #define	NODE_OFF_EXTSTR_DATA		sizeof (uintptr_t)
@@ -328,6 +333,27 @@ static v8_constant_t v8_constants[] = {
 	{ &V8_ELEMENTS_DICTIONARY_ELEMENTS,
 	    "v8dbg_elements_dictionary_elements",
 	    V8_CONSTANT_FALLBACK(0, 0), 6 },
+
+	{ &V8_CONTEXT_NCOMMON, "v8dbg_context_ncommon",
+	    V8_CONSTANT_FALLBACK(0, 0), 4 },
+	{ &V8_CONTEXT_IDX_CLOSURE, "v8dbg_context_idx_closure",
+	    V8_CONSTANT_FALLBACK(0, 0), 0 },
+	{ &V8_CONTEXT_IDX_PREV, "v8dbg_context_idx_prev",
+	    V8_CONSTANT_FALLBACK(0, 0), 1 },
+	{ &V8_CONTEXT_IDX_EXT, "v8dbg_context_idx_ext",
+	    V8_CONSTANT_FALLBACK(0, 0), 2 },
+	{ &V8_CONTEXT_IDX_GLOBAL, "v8dbg_context_idx_global",
+	    V8_CONSTANT_FALLBACK(0, 0), 3 },
+
+	{ &V8_SCOPEINFO_IDX_NPARAMS, "v8dbg_scopeinfo_idx_nparams",
+	    V8_CONSTANT_FALLBACK(0, 0), 1 },
+	{ &V8_SCOPEINFO_IDX_NSTACKLOCALS, "v8dbg_scopeinfo_idx_nstacklocals",
+	    V8_CONSTANT_FALLBACK(0, 0), 2 },
+	{ &V8_SCOPEINFO_IDX_NCONTEXTLOCALS,
+	    "v8dbg_scopeinfo_idx_ncontextlocals",
+	    V8_CONSTANT_FALLBACK(0, 0), 3 },
+	{ &V8_SCOPEINFO_IDX_FIRST_VARS, "v8dbg_scopeinfo_idx_first_vars",
+	    V8_CONSTANT_FALLBACK(0, 0), 4 },
 };
 
 static int v8_nconstants = sizeof (v8_constants) / sizeof (v8_constants[0]);
@@ -362,6 +388,8 @@ static v8_offset_t v8_offsets[] = {
 	    "JSArray", "length" },
 	{ &V8_OFF_JSDATE_VALUE,
 	    "JSDate", "value", B_TRUE },
+	{ &V8_OFF_JSFUNCTION_CONTEXT,
+	    "JSFunction", "context", B_TRUE },
 	{ &V8_OFF_JSFUNCTION_SHARED,
 	    "JSFunction", "shared" },
 	{ &V8_OFF_JSOBJECT_ELEMENTS,
@@ -412,6 +440,8 @@ static v8_offset_t v8_offsets[] = {
 	    "SharedFunctionInfo", "length" },
 	{ &V8_OFF_SHAREDFUNCTIONINFO_NAME,
 	    "SharedFunctionInfo", "name" },
+	{ &V8_OFF_SHAREDFUNCTIONINFO_SCOPE_INFO,
+	    "SharedFunctionInfo", "scope_info", B_TRUE },
 	{ &V8_OFF_SHAREDFUNCTIONINFO_SCRIPT,
 	    "SharedFunctionInfo", "script" },
 	{ &V8_OFF_SLICEDSTRING_OFFSET,
@@ -441,9 +471,9 @@ static int conf_update_type(v8_cfg_t *, const char *);
 static int conf_update_frametype(v8_cfg_t *, const char *);
 static void conf_class_compute_offsets(v8_class_t *);
 
-static int read_typebyte(uint8_t *, uintptr_t);
 static int heap_offset(const char *, const char *, ssize_t *);
 static int jsfunc_name(uintptr_t, char **, size_t *);
+
 
 /*
  * When iterating properties, it's useful to keep track of what kinds of
@@ -703,6 +733,20 @@ again:
 	if (V8_OFF_SLICEDSTRING_PARENT == -1)
 		V8_OFF_SLICEDSTRING_PARENT = V8_OFF_SLICEDSTRING_OFFSET -
 		    sizeof (uintptr_t);
+
+	if (V8_OFF_JSFUNCTION_CONTEXT == -1)
+		V8_OFF_JSFUNCTION_CONTEXT = V8_OFF_JSFUNCTION_SHARED +
+		    sizeof (uintptr_t);
+
+	if (V8_OFF_SHAREDFUNCTIONINFO_SCOPE_INFO == -1) {
+		if (heap_offset("SharedFunctionInfo", "optimized_code_map",
+		    &V8_OFF_SHAREDFUNCTIONINFO_SCOPE_INFO) == -1) {
+			V8_OFF_SHAREDFUNCTIONINFO_SCOPE_INFO = -1;
+		} else {
+			V8_OFF_SHAREDFUNCTIONINFO_SCOPE_INFO +=
+			    sizeof (uintptr_t);
+		}
+	}
 
 	/*
 	 * If we don't have bit_field/bit_field2 for Map, we know that they're
@@ -1064,7 +1108,14 @@ bsnprintf(char **bufp, size_t *buflenp, const char *format, ...)
 	return (rv);
 }
 
-static void
+void
+maybefree(void *arg, size_t sz, int memflags)
+{
+	if (!(memflags & UM_GC))
+		mdb_free(arg, sz);
+}
+
+void
 v8_warn(const char *format, ...)
 {
 	char buf[512];
@@ -1134,7 +1185,7 @@ heap_offset(const char *klass, const char *field, ssize_t *offp)
  * Assuming "addr" is an instance of the C++ heap class "klass", read into *valp
  * the pointer-sized value of field "field".
  */
-static int
+int
 read_heap_ptr(uintptr_t *valp, uintptr_t addr, ssize_t off)
 {
 	if (mdb_vread(valp, sizeof (*valp), addr + off) == -1) {
@@ -1180,7 +1231,7 @@ read_heap_double(double *valp, uintptr_t addr, ssize_t off)
  * Assuming "addr" refers to a FixedArray, return a newly-allocated array
  * representing its contents.
  */
-static int
+int
 read_heap_array(uintptr_t addr, uintptr_t **retp, size_t *lenp, int flags)
 {
 	uint8_t type;
@@ -1210,9 +1261,7 @@ read_heap_array(uintptr_t addr, uintptr_t **retp, size_t *lenp, int flags)
 
 	if (mdb_vread(*retp, len * sizeof (uintptr_t),
 	    addr + V8_OFF_FIXEDARRAY_DATA) == -1) {
-		if (!(flags & UM_GC))
-			mdb_free(*retp, len * sizeof (uintptr_t));
-
+		maybefree(*retp, len * sizeof (uintptr_t), flags);
 		*retp = NULL;
 		return (-1);
 	}
@@ -1276,7 +1325,7 @@ read_heap_maybesmi(uintptr_t *valp, uintptr_t addr, ssize_t off)
  * object.  This is shorthand for first retrieving the Map at the start of the
  * heap object and then retrieving the type byte from the Map object.
  */
-static int
+int
 read_typebyte(uint8_t *valp, uintptr_t addr)
 {
 	uintptr_t mapaddr;
@@ -3427,6 +3476,7 @@ dcmd_v8function(uintptr_t addr, uint_t flags, int argc, const mdb_arg_t *argv)
 {
 	uint8_t type;
 	uintptr_t funcinfop, scriptp, lendsp, tokpos, namep, codep;
+	uintptr_t contextp, scopeinfop;
 	char *bufp;
 	size_t len;
 	boolean_t opt_d = B_FALSE;
@@ -3455,6 +3505,10 @@ dcmd_v8function(uintptr_t addr, uint_t flags, int argc, const mdb_arg_t *argv)
 	    read_heap_ptr(&lendsp, scriptp, V8_OFF_SCRIPT_LINE_ENDS) != 0)
 		goto err;
 
+
+	if (read_heap_ptr(&contextp, addr, V8_OFF_JSFUNCTION_CONTEXT) != 0)
+		goto err;
+
 	/*
 	 * The token position is normally a SMI, so read_heap_maybesmi() will
 	 * interpret the value for us.  However, this code uses its SMI-encoded
@@ -3480,6 +3534,18 @@ dcmd_v8function(uintptr_t addr, uint_t flags, int argc, const mdb_arg_t *argv)
 		mdb_printf("%s", buf);
 
 	mdb_printf("\n");
+
+	mdb_printf("context: %p\n", contextp);
+	if (V8_OFF_SHAREDFUNCTIONINFO_SCOPE_INFO != -1) {
+		if (read_heap_ptr(&scopeinfop, funcinfop,
+		    V8_OFF_SHAREDFUNCTIONINFO_SCOPE_INFO) != 0) {
+			goto err;
+		}
+
+		mdb_printf("shared scope_info: %p\n", scopeinfop);
+	} else {
+		mdb_printf("shared scope_info not available\n");
+	}
 
 	if (read_heap_ptr(&codep,
 	    funcinfop, V8_OFF_SHAREDFUNCTIONINFO_CODE) != 0)
@@ -3584,6 +3650,127 @@ dcmd_v8print(uintptr_t addr, uint_t flags, int argc, const mdb_arg_t *argv)
 
 	return (obj_print_class(addr, clp));
 }
+
+static int do_v8scopeinfo_vartype_print(v8scopeinfo_t *, v8scopeinfo_vartype_t,
+    void *);
+static int do_v8scopeinfo_var_print(v8scopeinfo_t *, v8scopeinfo_var_t *,
+    void *);
+
+/* ARGSUSED */
+static int
+dcmd_v8scopeinfo(uintptr_t addr, uint_t flags, int argc, const mdb_arg_t *argv)
+{
+	v8scopeinfo_t *sip;
+
+	if ((sip = v8scopeinfo_load(addr, UM_SLEEP | UM_GC)) == NULL) {
+		mdb_warn("failed to load ScopeInfo");
+		return (DCMD_ERR);
+	}
+
+	if (v8scopeinfo_iter_vartypes(sip, do_v8scopeinfo_vartype_print,
+	    NULL) != 0) {
+		mdb_warn("failed to walk scope info");
+		return (DCMD_ERR);
+	}
+
+	return (DCMD_OK);
+}
+
+static int
+do_v8scopeinfo_vartype_print(v8scopeinfo_t *sip,
+    v8scopeinfo_vartype_t scopevartype, void *arg)
+{
+	size_t nvars;
+	const char *label;
+
+	nvars = v8scopeinfo_vartype_nvars(sip, scopevartype);
+	label = v8scopeinfo_vartype_name(scopevartype);
+	mdb_printf("%d %s%s\n", nvars, label, nvars == 1 ? "" : "s");
+	return (v8scopeinfo_iter_vars(sip, scopevartype,
+	    do_v8scopeinfo_var_print, (void *)label));
+}
+
+static int
+do_v8scopeinfo_var_print(v8scopeinfo_t *sip, v8scopeinfo_var_t *sivp, void *arg)
+{
+	const char *label = arg;
+	uintptr_t namestr;
+	char buf[64];
+	char *bufp;
+	size_t buflen;
+
+	namestr = v8scopeinfo_var_name(sip, sivp);
+	mdb_printf("    %s %d: %p", label, v8scopeinfo_var_idx(sip, sivp),
+	    namestr);
+
+	bufp = buf;
+	buflen = sizeof (buf);
+	if (jsstr_print(namestr, JSSTR_QUOTED, &bufp, &buflen) == 0) {
+		mdb_printf(" (%s)\n", buf);
+	} else {
+		mdb_printf("\n");
+	}
+
+	return (0);
+}
+
+
+static int do_v8context_static_slot(v8context_t *, const char *,
+    uintptr_t, void *);
+static int do_v8context_dynamic_slot(v8context_t *, uint_t, uintptr_t, void *);
+
+/* ARGSUSED */
+static int
+dcmd_v8context(uintptr_t addr, uint_t flags, int argc, const mdb_arg_t *argv)
+{
+	v8context_t *ctxp;
+
+	if ((ctxp = v8context_load(addr, UM_SLEEP | UM_GC)) == NULL) {
+		mdb_warn("failed to load Context\n");
+		return (DCMD_ERR);
+	}
+
+	if (v8context_iter_static_slots(ctxp, do_v8context_static_slot,
+	    NULL) != 0 ||
+	    v8context_iter_dynamic_slots(ctxp, do_v8context_dynamic_slot,
+	    NULL) != 0) {
+		mdb_warn("failed to iterate context\n");
+		return (DCMD_ERR);
+	}
+
+	return (DCMD_OK);
+}
+
+static int
+do_v8context_static_slot(v8context_t *ctxp, const char *label, uintptr_t value,
+    void *arg)
+{
+	char buf[64];
+	char *bufp;
+	size_t bufsz;
+
+	mdb_printf("%s: %p", label, value);
+
+	bufp = buf;
+	bufsz = sizeof (buf);
+	if (obj_jstype(value, &bufp, &bufsz, NULL) == 0) {
+		mdb_printf(" (%s)\n", buf);
+	} else {
+		mdb_printf("\n");
+	}
+
+	return (0);
+}
+
+static int
+do_v8context_dynamic_slot(v8context_t *ctxp, uint_t which, uintptr_t value,
+    void *arg)
+{
+	char buf[16];
+	(void) snprintf(buf, sizeof (buf), "    slot %d", which);
+	return (do_v8context_static_slot(ctxp, buf, value, arg));
+}
+
 
 /* ARGSUSED */
 static int
@@ -5054,6 +5241,79 @@ dcmd_nodebuffer(uintptr_t addr, uint_t flags, int argc,
 	return (DCMD_OK);
 }
 
+static int
+jsclosure_iter_var(v8scopeinfo_t *sip, v8scopeinfo_var_t *sivp, void *arg)
+{
+	v8context_t *ctxp = arg;
+	uintptr_t namep, valp;
+	size_t validx, bufsz;
+	char buf[1024];
+	char *bufp;
+	jsobj_print_t jsop;
+
+	bufp = buf;
+	bufsz = sizeof (buf);
+	(void) bsnprintf(&bufp, &bufsz, "    ");
+	namep = v8scopeinfo_var_name(sip, sivp);
+	if (jsstr_print(namep, JSSTR_QUOTED, &bufp, &bufsz) != 0) {
+		return (-1);
+	}
+
+	validx = v8scopeinfo_var_idx(sip, sivp);
+	if (v8context_var_value(ctxp, validx, &valp) != 0) {
+		return (-1);
+	}
+
+	(void) bsnprintf(&bufp, &bufsz, ": ");
+
+	bzero(&jsop, sizeof (jsop));
+	jsop.jsop_depth = 1;
+	jsop.jsop_bufp = &bufp;
+	jsop.jsop_lenp = &bufsz;
+	jsop.jsop_indent = 4;
+	jsop.jsop_printaddr = B_TRUE;
+	if (jsobj_print(valp, &jsop) != 0) {
+		return (-1);
+	}
+
+	mdb_printf("%s\n", buf);
+	return (0);
+}
+
+/* ARGSUSED */
+static int
+dcmd_jsclosure(uintptr_t addr, uint_t flags, int argc, const mdb_arg_t *argv)
+{
+	v8function_t *funcp;
+	v8context_t *ctxp;
+	v8scopeinfo_t *sip;
+	int memflags = UM_SLEEP | UM_GC;
+
+	if ((funcp = v8function_load(addr, memflags)) == NULL) {
+		mdb_warn("%p: failed to load JSFunction\n", addr);
+		return (DCMD_ERR);
+	}
+
+	if ((ctxp = v8function_context(funcp, memflags)) == NULL) {
+		mdb_warn("%p: failed to load Context for JSFunction\n", addr);
+		return (DCMD_ERR);
+	}
+
+	if ((sip = v8context_scopeinfo(ctxp, memflags)) == NULL) {
+		mdb_warn("%p: failed to load ScopeInfo\n", addr);
+		return (DCMD_ERR);
+	}
+
+	if (v8scopeinfo_iter_vars(sip, V8SV_CONTEXTLOCALS,
+	    jsclosure_iter_var, ctxp) != 0) {
+		mdb_warn("%p: failed to iterate closure variables\n", addr);
+		return (DCMD_ERR);
+	}
+
+	return (DCMD_OK);
+}
+
+
 /* ARGSUSED */
 static int
 dcmd_jsconstructor(uintptr_t addr, uint_t flags, int argc,
@@ -5800,6 +6060,8 @@ static const mdb_dcmd_t v8_mdb_dcmds[] = {
 	/*
 	 * Commands to inspect JavaScript-level state
 	 */
+	{ "jsclosure", ":", "print variables referenced by a closure",
+		dcmd_jsclosure },
 	{ "jsconstructor", ":[-v]",
 		"print the constructor for a JavaScript object",
 		dcmd_jsconstructor },
@@ -5827,6 +6089,8 @@ static const mdb_dcmd_t v8_mdb_dcmds[] = {
 		dcmd_v8classes },
 	{ "v8code", ":[-d]", "print information about a V8 Code object",
 		dcmd_v8code },
+	{ "v8context", ":[-d]", "print information about a V8 Context object",
+		dcmd_v8context },
 	{ "v8field", "classname fieldname offset",
 		"manually add a field to a given class", dcmd_v8field },
 	{ "v8function", ":[-d]", "print JSFunction object details",
@@ -5841,6 +6105,8 @@ static const mdb_dcmd_t v8_mdb_dcmds[] = {
 		dcmd_v8print, dcmd_v8print_help },
 	{ "v8str", ":[-v]", "print the contents of a V8 string",
 		dcmd_v8str },
+	{ "v8scopeinfo", ":", "print information about a V8 ScopeInfo object",
+		dcmd_v8scopeinfo },
 	{ "v8type", ":", "print the type of a V8 heap object",
 		dcmd_v8type },
 	{ "v8types", NULL, "list known V8 heap object types",

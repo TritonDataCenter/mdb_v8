@@ -46,7 +46,7 @@ MDBV8_VERS_TAG	 = "dev"
 # List of source files that will become objects.  (These entries do not include
 # the "src/" directory prefix.)
 #
-MDBV8_SOURCES		 = mdb_v8.c mdb_v8_cfg.c
+MDBV8_SOURCES		 = mdb_v8.c mdb_v8_cfg.c mdb_v8_context.c
 MDBV8_GENSOURCES	 = mdb_v8_version.c
 
 # List of source files to run through cstyle.  This includes header files.
