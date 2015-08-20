@@ -567,6 +567,52 @@ Option summary:
     -r       Find references to the specified and/or marked object(s)
     -v       Provide verbose statistics
 
+### jsclosure
+
+    addr::jsclosure
+
+Given a function identified by `addr`, print out the closure variables that are
+visible to that function.  You may find `addr` from the stack, from the output
+of the `jsfunctions` command, or as a property of some other object.
+
+As an example, here's some example code from the file `events.js` in Node v0.10:
+
+```javascript
+EventEmitter.prototype.once = function once(type, listener) {
+  if (typeof listener !== 'function')
+    throw TypeError('listener must be a function');
+
+  var fired = false;
+
+  function g() {
+    this.removeListener(type, g);
+
+    if (!fired) {
+      fired = true;
+      listener.apply(this, arguments);
+    }
+  }
+
+  g.listener = listener;
+  this.on(type, g);
+
+  return this;
+};
+```
+
+Each time the `once()` function is invoked, a new closure is created for the
+`g()` function.  Each _closure_ has references to different values of variables
+like `type` and `listener`.  The `jsclosure` command prints these out:
+
+    > 8270a879::jsclosure
+        "listener": 8270aa59: function <anonymous> (as <anon>)
+        "type": a7015511: "error"
+        "fired": b47080c1: false
+        "g": 8270a879: function g
+
+Of course, you can use other commands to inspect these values further.
+
+
 ### jsconstructor
 
     addr::jsconstructor [-v]
@@ -817,10 +863,12 @@ Walking V8 structures:
 
 * v8array: given a V8 FixedArray, print the elements of the array
 * v8code: print details about a V8 Code object (including disassembly)
+* v8context: print information about a V8 Context object
 * v8function: print details about a V8 function object (including disassembly)
 * v8internal: fetch internal fields from heap objects
 * v8load: manually load configuration for Node v0.4 or v0.6
 * v8print: print a C++ object that's part of V8's heap
+* v8scopeinfo: print information about a V8 ScopeInfo object
 * v8str: print the contents of a V8 string (optionally show details of structure)
 * v8type: print the V8 type of a heap object
 
