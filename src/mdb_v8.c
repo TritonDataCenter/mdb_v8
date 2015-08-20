@@ -5707,9 +5707,9 @@ dcmd_jsfunctions_help(void)
 	mdb_inc_indent(2);
 
 	mdb_printf("%s\n",
-"  -f file  List functions that were defined in a file whose name contains\n"
-"           this substring.\n"
 "  -n func  List functions whose name contains this substring\n"
+"  -s file  List functions that were defined in a file whose name contains\n"
+"           this substring.\n"
 "  -x instr List functions whose compiled instructions include this address\n"
 "  -X       Show where the function's instructions are stored in memory\n");
 }
