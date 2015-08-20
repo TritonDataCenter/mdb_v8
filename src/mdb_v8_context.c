@@ -349,7 +349,8 @@ v8scopeinfo_vartype_name(v8scopeinfo_vartype_t scopevartype)
  * context-local variables, when scopevartype is V8SV_CONTEXTLOCALS).
  */
 size_t
-v8scopeinfo_vartype_nvars(v8scopeinfo_t *sip, v8scopeinfo_vartype_t scopevartype)
+v8scopeinfo_vartype_nvars(v8scopeinfo_t *sip,
+    v8scopeinfo_vartype_t scopevartype)
 {
 	v8scopeinfo_vartype_info_t *vtip;
 	uintptr_t value;
@@ -491,7 +492,7 @@ v8context_t *
 v8function_context(v8function_t *funcp, int memflags)
 {
 	uintptr_t addr, context;
-	
+
 	addr = funcp->v8func_addr;
 	if (read_heap_ptr(&context, addr, V8_OFF_JSFUNCTION_CONTEXT) != 0) {
 		v8_warn("%p: failed to read context\n", addr);
