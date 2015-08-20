@@ -44,6 +44,8 @@
 #include "v8dbg.h"
 #include "v8cfg.h"
 #include "mdb_v8_version.h"
+#include "mdb_v8_dbg.h"
+#include "mdb_v8_impl.h"
 
 #define	offsetof(s, m)	((size_t)(&(((s *)0)->m)))
 
@@ -111,27 +113,27 @@ static ssize_t	V8_OFF_FP_ARGS;
  * be preferred to using the constants directly.  The values of these constants
  * are initialized from the debug metadata.
  */
-static intptr_t	V8_FirstNonstringType;
-static intptr_t	V8_IsNotStringMask;
-static intptr_t	V8_StringTag;
-static intptr_t	V8_NotStringTag;
-static intptr_t	V8_StringEncodingMask;
-static intptr_t	V8_TwoByteStringTag;
-static intptr_t	V8_AsciiStringTag;
-static intptr_t	V8_StringRepresentationMask;
-static intptr_t	V8_SeqStringTag;
-static intptr_t	V8_ConsStringTag;
-static intptr_t	V8_SlicedStringTag;
-static intptr_t	V8_ExternalStringTag;
-static intptr_t	V8_FailureTag;
-static intptr_t	V8_FailureTagMask;
-static intptr_t	V8_HeapObjectTag;
-static intptr_t	V8_HeapObjectTagMask;
-static intptr_t	V8_SmiTag;
-static intptr_t	V8_SmiTagMask;
-static intptr_t	V8_SmiValueShift;
-static intptr_t	V8_SmiShiftSize;
-static intptr_t	V8_PointerSizeLog2;
+intptr_t V8_FirstNonstringType;
+intptr_t V8_IsNotStringMask;
+intptr_t V8_StringTag;
+intptr_t V8_NotStringTag;
+intptr_t V8_StringEncodingMask;
+intptr_t V8_TwoByteStringTag;
+intptr_t V8_AsciiStringTag;
+intptr_t V8_StringRepresentationMask;
+intptr_t V8_SeqStringTag;
+intptr_t V8_ConsStringTag;
+intptr_t V8_SlicedStringTag;
+intptr_t V8_ExternalStringTag;
+intptr_t V8_FailureTag;
+intptr_t V8_FailureTagMask;
+intptr_t V8_HeapObjectTag;
+intptr_t V8_HeapObjectTagMask;
+intptr_t V8_SmiTag;
+intptr_t V8_SmiTagMask;
+intptr_t V8_SmiValueShift;
+intptr_t V8_SmiShiftSize;
+intptr_t V8_PointerSizeLog2;
 
 static intptr_t	V8_ISSHARED_SHIFT;
 static intptr_t	V8_DICT_SHIFT;
@@ -150,17 +152,17 @@ static intptr_t	V8_PROP_DESC_VALUE;
 static intptr_t	V8_PROP_DESC_SIZE;
 static intptr_t	V8_TRANSITIONS_IDX_DESC;
 
-static intptr_t V8_TYPE_ACCESSORINFO = -1;
-static intptr_t V8_TYPE_ACCESSORPAIR = -1;
-static intptr_t V8_TYPE_EXECUTABLEACCESSORINFO = -1;
-static intptr_t V8_TYPE_JSOBJECT = -1;
-static intptr_t V8_TYPE_JSARRAY = -1;
-static intptr_t V8_TYPE_JSFUNCTION = -1;
-static intptr_t V8_TYPE_JSDATE = -1;
-static intptr_t V8_TYPE_JSREGEXP = -1;
-static intptr_t V8_TYPE_HEAPNUMBER = -1;
-static intptr_t V8_TYPE_ODDBALL = -1;
-static intptr_t V8_TYPE_FIXEDARRAY = -1;
+intptr_t V8_TYPE_ACCESSORINFO = -1;
+intptr_t V8_TYPE_ACCESSORPAIR = -1;
+intptr_t V8_TYPE_EXECUTABLEACCESSORINFO = -1;
+intptr_t V8_TYPE_JSOBJECT = -1;
+intptr_t V8_TYPE_JSARRAY = -1;
+intptr_t V8_TYPE_JSFUNCTION = -1;
+intptr_t V8_TYPE_JSDATE = -1;
+intptr_t V8_TYPE_JSREGEXP = -1;
+intptr_t V8_TYPE_HEAPNUMBER = -1;
+intptr_t V8_TYPE_ODDBALL = -1;
+intptr_t V8_TYPE_FIXEDARRAY = -1;
 
 static intptr_t V8_ELEMENTS_KIND_SHIFT;
 static intptr_t V8_ELEMENTS_KIND_BITCOUNT;
@@ -168,64 +170,64 @@ static intptr_t V8_ELEMENTS_FAST_ELEMENTS;
 static intptr_t V8_ELEMENTS_FAST_HOLEY_ELEMENTS;
 static intptr_t V8_ELEMENTS_DICTIONARY_ELEMENTS;
 
-static intptr_t V8_CONTEXT_NCOMMON;
-static intptr_t V8_CONTEXT_IDX_CLOSURE;
-static intptr_t V8_CONTEXT_IDX_PREV;
-static intptr_t V8_CONTEXT_IDX_EXT;
-static intptr_t V8_CONTEXT_IDX_GLOBAL;
+intptr_t V8_CONTEXT_NCOMMON;
+intptr_t V8_CONTEXT_IDX_CLOSURE;
+intptr_t V8_CONTEXT_IDX_PREV;
+intptr_t V8_CONTEXT_IDX_EXT;
+intptr_t V8_CONTEXT_IDX_GLOBAL;
 
-static intptr_t V8_SCOPEINFO_IDX_NPARAMS;
-static intptr_t V8_SCOPEINFO_IDX_NSTACKLOCALS;
-static intptr_t V8_SCOPEINFO_IDX_NCONTEXTLOCALS;
-static intptr_t V8_SCOPEINFO_IDX_FIRST_VARS;
+intptr_t V8_SCOPEINFO_IDX_NPARAMS;
+intptr_t V8_SCOPEINFO_IDX_NSTACKLOCALS;
+intptr_t V8_SCOPEINFO_IDX_NCONTEXTLOCALS;
+intptr_t V8_SCOPEINFO_IDX_FIRST_VARS;
 
 /*
  * Although we have this information in v8_classes, the following offsets are
  * defined explicitly because they're used directly in code below.
  */
-static ssize_t V8_OFF_CODE_INSTRUCTION_SIZE;
-static ssize_t V8_OFF_CODE_INSTRUCTION_START;
-static ssize_t V8_OFF_CONSSTRING_FIRST;
-static ssize_t V8_OFF_CONSSTRING_SECOND;
-static ssize_t V8_OFF_EXTERNALSTRING_RESOURCE;
-static ssize_t V8_OFF_FIXEDARRAY_DATA;
-static ssize_t V8_OFF_FIXEDARRAY_LENGTH;
-static ssize_t V8_OFF_HEAPNUMBER_VALUE;
-static ssize_t V8_OFF_HEAPOBJECT_MAP;
-static ssize_t V8_OFF_JSARRAY_LENGTH;
-static ssize_t V8_OFF_JSDATE_VALUE;
-static ssize_t V8_OFF_JSREGEXP_DATA;
-static ssize_t V8_OFF_JSFUNCTION_CONTEXT;
-static ssize_t V8_OFF_JSFUNCTION_SHARED;
-static ssize_t V8_OFF_JSOBJECT_ELEMENTS;
-static ssize_t V8_OFF_JSOBJECT_PROPERTIES;
-static ssize_t V8_OFF_MAP_CONSTRUCTOR;
-static ssize_t V8_OFF_MAP_INOBJECT_PROPERTIES;
-static ssize_t V8_OFF_MAP_INSTANCE_ATTRIBUTES;
-static ssize_t V8_OFF_MAP_INSTANCE_DESCRIPTORS;
-static ssize_t V8_OFF_MAP_INSTANCE_SIZE;
-static ssize_t V8_OFF_MAP_BIT_FIELD;
-static ssize_t V8_OFF_MAP_BIT_FIELD2;
-static ssize_t V8_OFF_MAP_BIT_FIELD3;
-static ssize_t V8_OFF_MAP_TRANSITIONS;
-static ssize_t V8_OFF_ODDBALL_TO_STRING;
-static ssize_t V8_OFF_SCRIPT_LINE_ENDS;
-static ssize_t V8_OFF_SCRIPT_NAME;
-static ssize_t V8_OFF_SCRIPT_SOURCE;
-static ssize_t V8_OFF_SEQASCIISTR_CHARS;
-static ssize_t V8_OFF_SEQONEBYTESTR_CHARS;
-static ssize_t V8_OFF_SEQTWOBYTESTR_CHARS;
-static ssize_t V8_OFF_SHAREDFUNCTIONINFO_CODE;
-static ssize_t V8_OFF_SHAREDFUNCTIONINFO_SCOPE_INFO;
-static ssize_t V8_OFF_SHAREDFUNCTIONINFO_END_POSITION;
-static ssize_t V8_OFF_SHAREDFUNCTIONINFO_FUNCTION_TOKEN_POSITION;
-static ssize_t V8_OFF_SHAREDFUNCTIONINFO_INFERRED_NAME;
-static ssize_t V8_OFF_SHAREDFUNCTIONINFO_LENGTH;
-static ssize_t V8_OFF_SHAREDFUNCTIONINFO_SCRIPT;
-static ssize_t V8_OFF_SHAREDFUNCTIONINFO_NAME;
-static ssize_t V8_OFF_SLICEDSTRING_PARENT;
-static ssize_t V8_OFF_SLICEDSTRING_OFFSET;
-static ssize_t V8_OFF_STRING_LENGTH;
+ssize_t V8_OFF_CODE_INSTRUCTION_SIZE;
+ssize_t V8_OFF_CODE_INSTRUCTION_START;
+ssize_t V8_OFF_CONSSTRING_FIRST;
+ssize_t V8_OFF_CONSSTRING_SECOND;
+ssize_t V8_OFF_EXTERNALSTRING_RESOURCE;
+ssize_t V8_OFF_FIXEDARRAY_DATA;
+ssize_t V8_OFF_FIXEDARRAY_LENGTH;
+ssize_t V8_OFF_HEAPNUMBER_VALUE;
+ssize_t V8_OFF_HEAPOBJECT_MAP;
+ssize_t V8_OFF_JSARRAY_LENGTH;
+ssize_t V8_OFF_JSDATE_VALUE;
+ssize_t V8_OFF_JSREGEXP_DATA;
+ssize_t V8_OFF_JSFUNCTION_CONTEXT;
+ssize_t V8_OFF_JSFUNCTION_SHARED;
+ssize_t V8_OFF_JSOBJECT_ELEMENTS;
+ssize_t V8_OFF_JSOBJECT_PROPERTIES;
+ssize_t V8_OFF_MAP_CONSTRUCTOR;
+ssize_t V8_OFF_MAP_INOBJECT_PROPERTIES;
+ssize_t V8_OFF_MAP_INSTANCE_ATTRIBUTES;
+ssize_t V8_OFF_MAP_INSTANCE_DESCRIPTORS;
+ssize_t V8_OFF_MAP_INSTANCE_SIZE;
+ssize_t V8_OFF_MAP_BIT_FIELD;
+ssize_t V8_OFF_MAP_BIT_FIELD2;
+ssize_t V8_OFF_MAP_BIT_FIELD3;
+ssize_t V8_OFF_MAP_TRANSITIONS;
+ssize_t V8_OFF_ODDBALL_TO_STRING;
+ssize_t V8_OFF_SCRIPT_LINE_ENDS;
+ssize_t V8_OFF_SCRIPT_NAME;
+ssize_t V8_OFF_SCRIPT_SOURCE;
+ssize_t V8_OFF_SEQASCIISTR_CHARS;
+ssize_t V8_OFF_SEQONEBYTESTR_CHARS;
+ssize_t V8_OFF_SEQTWOBYTESTR_CHARS;
+ssize_t V8_OFF_SHAREDFUNCTIONINFO_CODE;
+ssize_t V8_OFF_SHAREDFUNCTIONINFO_SCOPE_INFO;
+ssize_t V8_OFF_SHAREDFUNCTIONINFO_END_POSITION;
+ssize_t V8_OFF_SHAREDFUNCTIONINFO_FUNCTION_TOKEN_POSITION;
+ssize_t V8_OFF_SHAREDFUNCTIONINFO_INFERRED_NAME;
+ssize_t V8_OFF_SHAREDFUNCTIONINFO_LENGTH;
+ssize_t V8_OFF_SHAREDFUNCTIONINFO_SCRIPT;
+ssize_t V8_OFF_SHAREDFUNCTIONINFO_NAME;
+ssize_t V8_OFF_SLICEDSTRING_PARENT;
+ssize_t V8_OFF_SLICEDSTRING_OFFSET;
+ssize_t V8_OFF_STRING_LENGTH;
 
 /* see node_string.h */
 #define	NODE_OFF_EXTSTR_DATA		sizeof (uintptr_t)
@@ -479,113 +481,8 @@ static int conf_update_type(v8_cfg_t *, const char *);
 static int conf_update_frametype(v8_cfg_t *, const char *);
 static void conf_class_compute_offsets(v8_class_t *);
 
-static int read_typebyte(uint8_t *, uintptr_t);
 static int heap_offset(const char *, const char *, ssize_t *);
 static int jsfunc_name(uintptr_t, char **, size_t *);
-
-/*
- * In order to commonize code around reading and validating context information,
- * we require that callers use v8context_load() in order to work with Contexts.
- * TODO in the future, we will likely want to provide free() functions for
- * v8context and v8scopeinfo, and those are going to need to know whether UM_GC
- * was passed at load-time.
- */
-typedef struct {
-	uintptr_t	v8ctx_addr;
-	uintptr_t	*v8ctx_elts;
-	size_t		v8ctx_nelts;
-	int		v8ctx_error;
-} v8context_t;
-
-static int v8context_load(uintptr_t, v8context_t *, int);
-static unsigned int v8context_ncommon_slots(v8context_t *);
-static boolean_t v8context_is_func_ctx(v8context_t *);
-static uintptr_t v8context_closure(v8context_t *);
-static uintptr_t v8context_prev_context(v8context_t *);
-static uintptr_t v8context_var_value(v8context_t *, unsigned int);
-static uintptr_t v8context_elt(v8context_t *, unsigned int);
-static size_t v8context_nelts(v8context_t *);
-
-/*
- * This structure and array describe the statically-defined fields stored inside
- * each Context.
- */
-typedef struct {
-	const char	*v8ctxf_label;	/* name of field */
-	intptr_t	*v8ctxf_idxp;	/* ptr to index into context (array) */
-} v8context_field_t;
-
-static v8context_field_t v8context_fields[] = {
-	{ "closure function",	&V8_CONTEXT_IDX_CLOSURE },
-	{ "previous context",	&V8_CONTEXT_IDX_PREV },
-	{ "extension",		&V8_CONTEXT_IDX_EXT },
-	{ "global object",		&V8_CONTEXT_IDX_GLOBAL },
-};
-
-static size_t v8context_nfields =
-    sizeof (v8context_fields) / sizeof (v8context_fields[0]);
-
-static int v8context_iter_static_slots(v8context_t *,
-    int (*)(v8context_t *, const char *, uintptr_t, void *), void *);
-static int v8context_iter_dynamic_slots(v8context_t *,
-    int (*func)(v8context_t *, uint_t, uintptr_t, void *), void *);
-
-/*
- * We similarly abstract ScopeInfo objects.
- */
-typedef struct {
-	uintptr_t	v8si_addr;
-	uintptr_t	*v8si_elts;
-	size_t		v8si_nelts;
-	int		v8si_error;
-} v8scopeinfo_t;
-
-typedef enum {
-	V8SV_PARAMS,
-	V8SV_STACKLOCALS,
-	V8SV_CONTEXTLOCALS
-} v8scopeinfo_vartype_t;
-
-/*
- * This structure and array describe the layout of a ScopeInfo.  Each group
- * describes a certain kind of variable, and the structures below include
- * pointers to the field (inside a ScopeInfo) that stores the count of that kind
- * of variable.
- */
-typedef struct {
-	v8scopeinfo_vartype_t	v8sig_vartype;
-	const char		*v8sig_label;
-	intptr_t		*v8sig_idx_countp;
-} v8scopeinfo_group_t;
-
-static v8scopeinfo_group_t v8scopeinfo_groups[] = {
-	{ V8SV_PARAMS, "parameter", &V8_SCOPEINFO_IDX_NPARAMS },
-	{ V8SV_STACKLOCALS, "stack local variable",
-	    &V8_SCOPEINFO_IDX_NSTACKLOCALS },
-	{ V8SV_CONTEXTLOCALS, "context local variable",
-	    &V8_SCOPEINFO_IDX_NCONTEXTLOCALS },
-};
-
-static size_t v8scopeinfo_ngroups =
-    sizeof (v8scopeinfo_groups) / sizeof (v8scopeinfo_groups[0]);
-
-typedef struct {
-	size_t	v8siv_which;
-	size_t	v8siv_realidx;
-} v8scopeinfo_var_t;
-
-static int v8scopeinfo_load(uintptr_t, v8scopeinfo_t *, int);
-static int v8scopeinfo_iter_groups(v8scopeinfo_t *,
-    int (*)(v8scopeinfo_t *, v8scopeinfo_vartype_t, void *), void *);
-static const char *v8scopeinfo_group_name(v8scopeinfo_vartype_t);
-static size_t v8scopeinfo_group_nvars(v8scopeinfo_t *, v8scopeinfo_vartype_t);
-static int v8scopeinfo_iter_vars(v8scopeinfo_t *, v8scopeinfo_vartype_t,
-    int (*)(v8scopeinfo_t *, v8scopeinfo_var_t *, void *), void *);
-static size_t v8scopeinfo_var_idx(v8scopeinfo_t *, v8scopeinfo_var_t *);
-static uintptr_t v8scopeinfo_var_name(v8scopeinfo_t *, v8scopeinfo_var_t *);
-
-static int v8function_context(uintptr_t, v8context_t *, int);
-static int v8function_scopeinfo(uintptr_t, v8scopeinfo_t *, int);
 
 
 /*
@@ -1221,7 +1118,7 @@ bsnprintf(char **bufp, size_t *buflenp, const char *format, ...)
 	return (rv);
 }
 
-static void
+void
 v8_warn(const char *format, ...)
 {
 	char buf[512];
@@ -1291,7 +1188,7 @@ heap_offset(const char *klass, const char *field, ssize_t *offp)
  * Assuming "addr" is an instance of the C++ heap class "klass", read into *valp
  * the pointer-sized value of field "field".
  */
-static int
+int
 read_heap_ptr(uintptr_t *valp, uintptr_t addr, ssize_t off)
 {
 	if (mdb_vread(valp, sizeof (*valp), addr + off) == -1) {
@@ -1337,7 +1234,7 @@ read_heap_double(double *valp, uintptr_t addr, ssize_t off)
  * Assuming "addr" refers to a FixedArray, return a newly-allocated array
  * representing its contents.
  */
-static int
+int
 read_heap_array(uintptr_t addr, uintptr_t **retp, size_t *lenp, int flags)
 {
 	uint8_t type;
@@ -1433,7 +1330,7 @@ read_heap_maybesmi(uintptr_t *valp, uintptr_t addr, ssize_t off)
  * object.  This is shorthand for first retrieving the Map at the start of the
  * heap object and then retrieving the type byte from the Map object.
  */
-static int
+int
 read_typebyte(uint8_t *valp, uintptr_t addr)
 {
 	uintptr_t mapaddr;
@@ -3507,195 +3404,6 @@ jsobj_print_jsregexp(uintptr_t addr, jsobj_print_t *jsop)
 	return (0);
 }
 
-typedef int (*scopeinfo_var_func_t)(unsigned int, const char *, void *);
-
-static int
-v8scopeinfo_load(uintptr_t addr, v8scopeinfo_t *sip, int flags)
-{
-	bzero(sip, sizeof (*sip));
-	sip->v8si_addr = addr;
-	sip->v8si_error = read_heap_array(addr,
-	    &sip->v8si_elts, &sip->v8si_nelts, flags);
-
-	if (sip->v8si_error != 0) {
-		v8_warn("failed to read heap array for ScopeInfo\n");
-	} else if (sip->v8si_nelts < V8_SCOPEINFO_IDX_FIRST_VARS) {
-		v8_warn("array too short to be a ScopeInfo\n");
-		sip->v8si_error = -1;
-	} else if (!V8_IS_SMI(sip->v8si_elts[V8_SCOPEINFO_IDX_NPARAMS]) ||
-	    !V8_IS_SMI(sip->v8si_elts[V8_SCOPEINFO_IDX_NSTACKLOCALS]) ||
-	    !V8_IS_SMI(sip->v8si_elts[V8_SCOPEINFO_IDX_NCONTEXTLOCALS])) {
-		v8_warn("static ScopeInfo fields do not look like SMIs\n");
-		sip->v8si_error = -1;
-	}
-
-	return (sip->v8si_error);
-}
-
-static v8scopeinfo_group_t *
-v8scopeinfo_group_lookup(v8scopeinfo_vartype_t scopevartype)
-{
-	int i;
-	v8scopeinfo_group_t *sig;
-
-	for (i = 0; i < v8scopeinfo_ngroups; i++) {
-		sig = &v8scopeinfo_groups[i];
-		if (scopevartype == sig->v8sig_vartype)
-			return (sig);
-	}
-
-	return (NULL);
-}
-
-static const char *
-v8scopeinfo_group_name(v8scopeinfo_vartype_t scopevartype)
-{
-	v8scopeinfo_group_t *sig;
-
-	sig = v8scopeinfo_group_lookup(scopevartype);
-	assert(sig != NULL);
-	return (sig->v8sig_label);
-}
-
-static size_t
-v8scopeinfo_group_nvars(v8scopeinfo_t *sip, v8scopeinfo_vartype_t scopevartype)
-{
-	v8scopeinfo_group_t *sig;
-	uintptr_t value;
-
-	assert(sip->v8si_error == 0);
-	sig = v8scopeinfo_group_lookup(scopevartype);
-	assert(sig != NULL);
-	value = sip->v8si_elts[*(sig->v8sig_idx_countp)];
-	assert(V8_IS_SMI(value));
-	return (V8_SMI_VALUE(value));
-}
-
-static int
-v8scopeinfo_iter_groups(v8scopeinfo_t *sip,
-    int (*func)(v8scopeinfo_t *, v8scopeinfo_vartype_t, void *), void *arg)
-{
-	int i, rv;
-	v8scopeinfo_group_t *grp;
-
-	rv = 0;
-
-	for (i = 0; i < v8scopeinfo_ngroups; i++) {
-		grp = &v8scopeinfo_groups[i];
-		rv = func(sip, grp->v8sig_vartype, arg);
-		if (rv != 0)
-			break;
-	}
-
-	return (rv);
-}
-
-static int
-v8scopeinfo_iter_vars(v8scopeinfo_t *sip,
-    v8scopeinfo_vartype_t scopevartype,
-    int (*func)(v8scopeinfo_t *, v8scopeinfo_var_t *, void *), void *arg)
-{
-	int rv;
-	size_t i, nvars, nskip, idx;
-	v8scopeinfo_group_t *grp, *ogrp;
-	v8scopeinfo_var_t var;
-
-	grp = v8scopeinfo_group_lookup(scopevartype);
-	assert(grp != NULL);
-	nvars = v8scopeinfo_group_nvars(sip, scopevartype);
-
-	nskip = V8_SCOPEINFO_IDX_FIRST_VARS;
-	for (i = 0; i < v8scopeinfo_ngroups; i++) {
-		ogrp = &v8scopeinfo_groups[i];
-		if (*(ogrp->v8sig_idx_countp) >= *(grp->v8sig_idx_countp)) {
-			continue;
-		}
-
-		nskip += v8scopeinfo_group_nvars(sip, ogrp->v8sig_vartype);
-	}
-
-	rv = 0;
-	for (i = 0; i < nvars; i++) {
-		idx = nskip + i;
-		if (idx >= sip->v8si_nelts) {
-			v8_warn("v8scopeinfo_iter_vars: short scopeinfo\n");
-			return (-1);
-		}
-
-		var.v8siv_which = i;
-		var.v8siv_realidx = idx;
-		rv = func(sip, &var, arg);
-		if (rv != 0) {
-			break;
-		}
-	}
-
-	return (rv);
-}
-
-static size_t
-v8scopeinfo_var_idx(v8scopeinfo_t *sip, v8scopeinfo_var_t *sivp)
-{
-	return (sivp->v8siv_which);
-}
-
-static uintptr_t
-v8scopeinfo_var_name(v8scopeinfo_t *sip, v8scopeinfo_var_t *sivp)
-{
-	assert(sivp->v8siv_realidx < sip->v8si_nelts);
-	return (sip->v8si_elts[sivp->v8siv_realidx]);
-}
-
-static int
-v8context_scopeinfo(v8context_t *ctxp, v8scopeinfo_t *sip, int memflags)
-{
-	uintptr_t closure;
-	closure = v8context_closure(ctxp);
-	return (v8function_scopeinfo(closure, sip, memflags));
-}
-
-static int
-v8context_iter_static_slots(v8context_t *ctxp,
-    int (*func)(v8context_t *, const char *, uintptr_t, void *), void *arg)
-{
-	unsigned int i;
-	intptr_t idx;
-	uintptr_t value;
-	v8context_field_t *fp;
-	int rv;
-
-	rv = 0;
-	for (i = 0; i < v8context_nfields; i++) {
-		fp = &v8context_fields[i];
-		idx = *(fp->v8ctxf_idxp);
-		value = v8context_elt(ctxp, idx);
-		rv = func(ctxp, fp->v8ctxf_label, value, arg);
-		if (rv != 0) {
-			break;
-		}
-	}
-
-	return (rv);
-}
-
-static int
-v8context_iter_dynamic_slots(v8context_t *ctxp,
-    int (*func)(v8context_t *, uint_t, uintptr_t, void *), void *arg)
-{
-	unsigned int nslots, i;
-	int rv = 0;
-
-	nslots = v8context_ncommon_slots(ctxp);
-	for (i = nslots; i < v8context_nelts(ctxp); i++) {
-		rv = func(ctxp, i - nslots, v8context_elt(ctxp, i), arg);
-		if (rv != 0) {
-			break;
-		}
-	}
-
-	return (rv);
-}
-
 /*
  * dcmd implementations
  */
@@ -3948,124 +3656,6 @@ dcmd_v8print(uintptr_t addr, uint_t flags, int argc, const mdb_arg_t *argv)
 	return (obj_print_class(addr, clp));
 }
 
-static int
-v8context_load(uintptr_t addr, v8context_t *ctxp, int memflags)
-{
-	bzero(ctxp, sizeof (*ctxp));
-	ctxp->v8ctx_addr = addr;
-	ctxp->v8ctx_error = read_heap_array(addr,
-	    &ctxp->v8ctx_elts, &ctxp->v8ctx_nelts, memflags);
-
-	if (ctxp->v8ctx_error == 0 && ctxp->v8ctx_nelts < V8_CONTEXT_NCOMMON) {
-		v8_warn("array too short to be a Context\n");
-		ctxp->v8ctx_error = -1;
-	}
-
-	return (ctxp->v8ctx_error);
-}
-
-static unsigned int
-v8context_ncommon_slots(v8context_t *ctxp)
-{
-	assert(ctxp->v8ctx_error == 0);
-	return (V8_CONTEXT_NCOMMON);
-}
-
-static boolean_t
-v8context_is_func_ctx(v8context_t *ctxp)
-{
-	assert(ctxp->v8ctx_error == 0);
-	return (v8context_prev_context(ctxp) != NULL);
-}
-
-static uintptr_t
-v8context_closure(v8context_t *ctxp)
-{
-	assert(ctxp->v8ctx_error == 0);
-	return (v8context_elt(ctxp, V8_CONTEXT_IDX_CLOSURE));
-}
-
-static uintptr_t
-v8context_prev_context(v8context_t *ctxp)
-{
-	assert(ctxp->v8ctx_error == 0);
-	return (v8context_elt(ctxp, V8_CONTEXT_IDX_PREV));
-}
-
-static uintptr_t
-v8context_var_value(v8context_t *ctxp, unsigned int i)
-{
-	assert(ctxp->v8ctx_error == 0);
-	return (v8context_elt(ctxp, i + v8context_ncommon_slots(ctxp)));
-}
-
-static uintptr_t
-v8context_elt(v8context_t *ctxp, unsigned int i)
-{
-	assert(ctxp->v8ctx_error == 0);
-	assert(i < ctxp->v8ctx_nelts);
-	return (ctxp->v8ctx_elts[i]);
-}
-
-static size_t
-v8context_nelts(v8context_t *ctxp)
-{
-	assert(ctxp->v8ctx_error == 0);
-	return (ctxp->v8ctx_nelts);
-}
-
-/*
- * It would be nice to abstract this into something like v8function_load(), as
- * we've done with v8context and v8scopeinfo.  That way, we could write other
- * function-related operations in terms of this, and only have to validate it
- * once.
- */
-static int
-v8function_context(uintptr_t addr, v8context_t *ctxp, int memflags)
-{
-	uint8_t type;
-	const char *typename;
-	uintptr_t context;
-
-	if (!V8_IS_HEAPOBJECT(addr) || read_typebyte(&type, addr) != 0) {
-		v8_warn("%p: not a heap object\n", addr);
-		return (-1);
-	}
-
-	typename = enum_lookup_str(v8_types, type, "");
-	if (strcmp(typename, "JSFunction") != 0) {
-		v8_warn("%p: not a JSFunction\n", addr);
-		return (-1);
-	}
-
-	if (read_heap_ptr(&context, addr, V8_OFF_JSFUNCTION_CONTEXT) != 0) {
-		v8_warn("%p: failed to read context\n", addr);
-		return (-1);
-	}
-
-	return (v8context_load(context, ctxp, memflags));
-}
-
-static int
-v8function_scopeinfo(uintptr_t closure, v8scopeinfo_t *sip, int memflags)
-{
-	uintptr_t shared, scopeinfo;
-
-	if (V8_OFF_SHAREDFUNCTIONINFO_SCOPE_INFO == -1) {
-		v8_warn("could not find \"scope_info\"");
-		return (-1);
-	}
-
-	if (read_heap_ptr(&shared, closure, V8_OFF_JSFUNCTION_SHARED) != 0 ||
-	    read_heap_ptr(&scopeinfo, shared,
-	    V8_OFF_SHAREDFUNCTIONINFO_SCOPE_INFO) != 0 ||
-	    v8scopeinfo_load(scopeinfo, sip, memflags) != 0) {
-		return (-1);
-	}
-
-	return (0);
-}
-
 static int do_v8scopeinfo_group_print(v8scopeinfo_t *, v8scopeinfo_vartype_t,
     void *);
 static int do_v8scopeinfo_var_print(v8scopeinfo_t *, v8scopeinfo_var_t *,
@@ -4144,12 +3734,6 @@ dcmd_v8context(uintptr_t addr, uint_t flags, int argc, const mdb_arg_t *argv)
 		return (DCMD_ERR);
 	}
 
-	if (v8context_is_func_ctx(&ctx)) {
-		mdb_printf("function context:\n");
-	} else {
-		mdb_printf("\"with\" context:\n");
-	}
-
 	if (v8context_iter_static_slots(&ctx, do_v8context_static_slot,
 	    NULL) != 0 ||
 	    v8context_iter_dynamic_slots(&ctx, do_v8context_dynamic_slot,
@@ -4169,7 +3753,7 @@ do_v8context_static_slot(v8context_t *ctxp, const char *label, uintptr_t value,
 	char *bufp;
 	size_t bufsz;
 
-	mdb_printf("    %s: %p", label, value);
+	mdb_printf("%s: %p", label, value);
 
 	bufp = buf;
 	bufsz = sizeof (buf);
@@ -4187,7 +3771,7 @@ do_v8context_dynamic_slot(v8context_t *ctxp, uint_t which, uintptr_t value,
     void *arg)
 {
 	char buf[16];
-	(void) snprintf(buf, sizeof (buf), "slot %d", which);
+	(void) snprintf(buf, sizeof (buf), "    slot %d", which);
 	return (do_v8context_static_slot(ctxp, buf, value, arg));
 }
 
@@ -5680,9 +5264,7 @@ jsclosure_iter_var(v8scopeinfo_t *sip, v8scopeinfo_var_t *sivp, void *arg)
 	}
 
 	validx = v8scopeinfo_var_idx(sip, sivp);
-	if (validx >= v8context_nelts(ctxp)) {
-		v8_warn("context %p: index %d is out of range\n",
-		    ctxp->v8ctx_addr, validx);
+	if (v8context_var_value(ctxp, validx, &valp) != 0) {
 		return (-1);
 	}
 
@@ -5694,7 +5276,6 @@ jsclosure_iter_var(v8scopeinfo_t *sip, v8scopeinfo_var_t *sivp, void *arg)
 	jsop.jsop_lenp = &bufsz;
 	jsop.jsop_indent = 4;
 	jsop.jsop_printaddr = B_TRUE;
-	valp = v8context_var_value(ctxp, validx);
 	if (jsobj_print(valp, &jsop) != 0) {
 		return (-1);
 	}
