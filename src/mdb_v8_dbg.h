@@ -26,13 +26,13 @@
  * these, but they have not been abstracted here.
  *
  * Functions here fall into one of two categories: functions that return "int"
- * can generally fail because of a validation problem or a failure to read
- * information from the target's address space.  Other functions cannot fail
- * because it's assumed that whatever conditions they depend on have already
- * been validated.  They typically assert such conditions.  It's critical that
- * such conditions _have_ already been checked (e.g., in v8context_load() or by
- * the caller).  The debugger should not assume that the target's address space
- * is not arbitrarily corrupt.
+ * (or a pointer that may be NULL) can generally fail because of a validation
+ * problem or a failure to read information from the target's address space.
+ * Other functions cannot fail because it's assumed that whatever conditions
+ * they depend on have already been validated.  They typically assert such
+ * conditions.  It's critical that such conditions _have_ already been checked
+ * (e.g., in v8context_load() or by the caller).  The debugger should not assume
+ * that the target's address space is not arbitrarily corrupt.
  */
 
 #ifndef _MDBV8DBG_H
@@ -86,15 +86,9 @@
  * Working with Contexts
  */
 
-/* XXX This type should be opaque. */
-typedef struct {
-	uintptr_t	v8ctx_addr;
-	uintptr_t	*v8ctx_elts;
-	size_t		v8ctx_nelts;
-	int		v8ctx_error;
-} v8context_t;
+typedef struct v8context v8context_t;
 
-int v8context_load(uintptr_t, v8context_t *, int);
+v8context_t *v8context_load(uintptr_t, int);
 uintptr_t v8context_closure(v8context_t *);
 uintptr_t v8context_prev_context(v8context_t *);
 int v8context_var_value(v8context_t *, unsigned int, uintptr_t *);
@@ -111,13 +105,7 @@ int v8context_iter_dynamic_slots(v8context_t *,
  * Working with ScopeInfo objects
  */
 
-/* XXX This type should be opaque. */
-typedef struct {
-	uintptr_t	v8si_addr;
-	uintptr_t	*v8si_elts;
-	size_t		v8si_nelts;
-	int		v8si_error;
-} v8scopeinfo_t;
+typedef struct v8scopeinfo v8scopeinfo_t;
 
 typedef enum {
 	V8SV_PARAMS,
@@ -125,11 +113,10 @@ typedef enum {
 	V8SV_CONTEXTLOCALS
 } v8scopeinfo_vartype_t;
 
-struct v8scopeinfo_var;
 typedef struct v8scopeinfo_var v8scopeinfo_var_t;
 
-int v8scopeinfo_load(uintptr_t, v8scopeinfo_t *, int);
-int v8context_scopeinfo(v8context_t *, v8scopeinfo_t *, int);
+v8scopeinfo_t *v8scopeinfo_load(uintptr_t, int);
+v8scopeinfo_t *v8context_scopeinfo(v8context_t *, int);
 
 int v8scopeinfo_iter_groups(v8scopeinfo_t *,
     int (*)(v8scopeinfo_t *, v8scopeinfo_vartype_t, void *), void *);
@@ -141,7 +128,7 @@ int v8scopeinfo_iter_vars(v8scopeinfo_t *, v8scopeinfo_vartype_t,
 size_t v8scopeinfo_var_idx(v8scopeinfo_t *, v8scopeinfo_var_t *);
 uintptr_t v8scopeinfo_var_name(v8scopeinfo_t *, v8scopeinfo_var_t *);
 
-int v8function_context(uintptr_t, v8context_t *, int);
-int v8function_scopeinfo(uintptr_t, v8scopeinfo_t *, int);
+v8context_t *v8function_context(uintptr_t, int);
+v8scopeinfo_t *v8function_scopeinfo(uintptr_t, int);
 
 #endif /* _MDBV8DBG_H */

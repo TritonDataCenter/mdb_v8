@@ -20,6 +20,12 @@
 #include "mdb_v8_dbg.h"
 #include "mdb_v8_impl.h"
 
+struct v8context {
+	uintptr_t	v8ctx_addr;	/* Context address in target process */
+	uintptr_t	*v8ctx_elts;	/* Copied-in array of context slots */
+	size_t		v8ctx_nelts;	/* Count of context slots */
+};
+
 /*
  * This structure and array describe the statically-defined fields stored inside
  * each Context.  This is mainly useful for debugger tools that want to dump
@@ -39,6 +45,12 @@ static v8context_field_t v8context_fields[] = {
 
 static size_t v8context_nfields =
     sizeof (v8context_fields) / sizeof (v8context_fields[0]);
+
+struct v8scopeinfo {
+	uintptr_t	v8si_addr;	/* ScopeInfo address in target proc */
+	uintptr_t	*v8si_elts;	/* Copied-in array of slots */
+	size_t		v8si_nelts;	/* Count of slots */
+};
 
 /*
  * This structure and array describe the layout of a ScopeInfo.  Each group
@@ -81,26 +93,37 @@ static v8scopeinfo_group_t *v8scopeinfo_group_lookup(v8scopeinfo_vartype_t);
  */
 
 /*
- * Given a V8 Context in "addr", load it into "ctxp".  This will validate
- * basic properties of the context.  "memflags" are used for memory allocation.
- *
- * Returns 0 on success and -1 on failure.  On failure, the specifed context
- * must not be used for anything.
+ * Given a V8 Context in "addr", load it into "ctxp".  This will validate basic
+ * properties of the context.  "memflags" are used for memory allocation.
+ * Returns a context on success and NULL on failure.
  */
-int
-v8context_load(uintptr_t addr, v8context_t *ctxp, int memflags)
+v8context_t *
+v8context_load(uintptr_t addr, int memflags)
 {
-	bzero(ctxp, sizeof (*ctxp));
-	ctxp->v8ctx_addr = addr;
-	ctxp->v8ctx_error = read_heap_array(addr,
-	    &ctxp->v8ctx_elts, &ctxp->v8ctx_nelts, memflags);
+	v8context_t *ctxp;
 
-	if (ctxp->v8ctx_error == 0 && ctxp->v8ctx_nelts < V8_CONTEXT_NCOMMON) {
-		v8_warn("array too short to be a Context\n");
-		ctxp->v8ctx_error = -1;
+	if ((ctxp = mdb_zalloc(sizeof (*ctxp), memflags)) == NULL) {
+		return (NULL);
 	}
 
-	return (ctxp->v8ctx_error);
+	ctxp->v8ctx_addr = addr;
+	if (read_heap_array(addr, &ctxp->v8ctx_elts,
+	    &ctxp->v8ctx_nelts, memflags) != 0) {
+		goto err;
+	}
+
+	if (ctxp->v8ctx_nelts < V8_CONTEXT_NCOMMON) {
+		v8_warn("%p: context array is too short\n", addr);
+		goto err;
+	}
+
+	return (ctxp);
+
+err:
+	/* XXX This pattern should be cleaned up. */
+	if (!(memflags & UM_GC))
+		mdb_free(ctxp, sizeof (*ctxp));
+	return (NULL);
 }
 
 /*
@@ -111,7 +134,6 @@ v8context_load(uintptr_t addr, v8context_t *ctxp, int memflags)
 uintptr_t
 v8context_closure(v8context_t *ctxp)
 {
-	assert(ctxp->v8ctx_error == 0);
 	return (v8context_elt(ctxp, V8_CONTEXT_IDX_CLOSURE));
 }
 
@@ -121,7 +143,6 @@ v8context_closure(v8context_t *ctxp)
 uintptr_t
 v8context_prev_context(v8context_t *ctxp)
 {
-	assert(ctxp->v8ctx_error == 0);
 	return (v8context_elt(ctxp, V8_CONTEXT_IDX_PREV));
 }
 
@@ -134,7 +155,6 @@ v8context_var_value(v8context_t *ctxp, unsigned int i, uintptr_t *valptr)
 {
 	unsigned int idx;
 
-	assert(ctxp->v8ctx_error == 0);
 	idx = i + V8_CONTEXT_NCOMMON;
 	if (i >= ctxp->v8ctx_nelts) {
 		v8_warn("context %p: variable index %d is out of range\n",
@@ -150,12 +170,12 @@ v8context_var_value(v8context_t *ctxp, unsigned int i, uintptr_t *valptr)
  * Load scope information for this context into "sip".  See v8scopeinfo_load()
  * for "memflags".
  */
-int
-v8context_scopeinfo(v8context_t *ctxp, v8scopeinfo_t *sip, int memflags)
+v8scopeinfo_t *
+v8context_scopeinfo(v8context_t *ctxp, int memflags)
 {
 	uintptr_t closure;
 	closure = v8context_closure(ctxp);
-	return (v8function_scopeinfo(closure, sip, memflags));
+	return (v8function_scopeinfo(closure, memflags));
 }
 
 /*
@@ -165,7 +185,6 @@ v8context_scopeinfo(v8context_t *ctxp, v8scopeinfo_t *sip, int memflags)
 static uintptr_t
 v8context_elt(v8context_t *ctxp, unsigned int i)
 {
-	assert(ctxp->v8ctx_error == 0);
 	assert(i < ctxp->v8ctx_nelts);
 	return (ctxp->v8ctx_elts[i]);
 }
@@ -241,27 +260,40 @@ v8context_iter_dynamic_slots(v8context_t *ctxp,
  * Returns 0 on success and -1 on failure.  On failure, the specifed scope info
  * must not be used for anything.
  */
-int
-v8scopeinfo_load(uintptr_t addr, v8scopeinfo_t *sip, int flags)
+v8scopeinfo_t *
+v8scopeinfo_load(uintptr_t addr, int memflags)
 {
-	bzero(sip, sizeof (*sip));
-	sip->v8si_addr = addr;
-	sip->v8si_error = read_heap_array(addr,
-	    &sip->v8si_elts, &sip->v8si_nelts, flags);
+	v8scopeinfo_t *sip;
 
-	if (sip->v8si_error != 0) {
-		v8_warn("failed to read heap array for ScopeInfo\n");
-	} else if (sip->v8si_nelts < V8_SCOPEINFO_IDX_FIRST_VARS) {
+	if ((sip = mdb_zalloc(sizeof (*sip), memflags)) == NULL) {
+		return (NULL);
+	}
+
+	sip->v8si_addr = addr;
+	if (read_heap_array(addr,
+	    &sip->v8si_elts, &sip->v8si_nelts, memflags) != 0) {
+		goto err;
+	}
+
+	if (sip->v8si_nelts < V8_SCOPEINFO_IDX_FIRST_VARS) {
 		v8_warn("array too short to be a ScopeInfo\n");
-		sip->v8si_error = -1;
-	} else if (!V8_IS_SMI(sip->v8si_elts[V8_SCOPEINFO_IDX_NPARAMS]) ||
+		goto err;
+	}
+
+	if (!V8_IS_SMI(sip->v8si_elts[V8_SCOPEINFO_IDX_NPARAMS]) ||
 	    !V8_IS_SMI(sip->v8si_elts[V8_SCOPEINFO_IDX_NSTACKLOCALS]) ||
 	    !V8_IS_SMI(sip->v8si_elts[V8_SCOPEINFO_IDX_NCONTEXTLOCALS])) {
 		v8_warn("static ScopeInfo fields do not look like SMIs\n");
-		sip->v8si_error = -1;
+		goto err;
 	}
 
-	return (sip->v8si_error);
+	return (sip);
+
+err:
+	/* XXX This pattern should be cleaned up. */
+	if (!(memflags & UM_GC))
+		mdb_free(sip, sizeof (*sip));
+	return (NULL);
 }
 
 /*
@@ -313,7 +345,6 @@ v8scopeinfo_group_nvars(v8scopeinfo_t *sip, v8scopeinfo_vartype_t scopevartype)
 	v8scopeinfo_group_t *sig;
 	uintptr_t value;
 
-	assert(sip->v8si_error == 0);
 	sig = v8scopeinfo_group_lookup(scopevartype);
 	assert(sig != NULL);
 	value = sip->v8si_elts[*(sig->v8sig_idx_countp)];
@@ -424,28 +455,28 @@ v8scopeinfo_group_lookup(v8scopeinfo_vartype_t scopevartype)
  * finds the context, and calls v8context_load(), so see the notes about that
  * function.
  */
-int
-v8function_context(uintptr_t addr, v8context_t *ctxp, int memflags)
+v8context_t *
+v8function_context(uintptr_t addr, int memflags)
 {
 	uint8_t type;
 	uintptr_t context;
 
 	if (!V8_IS_HEAPOBJECT(addr) || read_typebyte(&type, addr) != 0) {
 		v8_warn("%p: not a heap object\n", addr);
-		return (-1);
+		return (NULL);
 	}
 
 	if (type != V8_TYPE_JSFUNCTION) {
 		v8_warn("%p: not a JSFunction\n", addr);
-		return (-1);
+		return (NULL);
 	}
 
 	if (read_heap_ptr(&context, addr, V8_OFF_JSFUNCTION_CONTEXT) != 0) {
 		v8_warn("%p: failed to read context\n", addr);
-		return (-1);
+		return (NULL);
 	}
 
-	return (v8context_load(context, ctxp, memflags));
+	return (v8context_load(context, memflags));
 }
 
 /*
@@ -459,22 +490,21 @@ v8function_context(uintptr_t addr, v8context_t *ctxp, int memflags)
  * ScopeInfo, and that's not the same as this one.  (For that, use
  * v8function_context() and then v8context_scopeinfo().)
  */
-int
-v8function_scopeinfo(uintptr_t closure, v8scopeinfo_t *sip, int memflags)
+v8scopeinfo_t *
+v8function_scopeinfo(uintptr_t closure, int memflags)
 {
 	uintptr_t shared, scopeinfo;
 
 	if (V8_OFF_SHAREDFUNCTIONINFO_SCOPE_INFO == -1) {
 		v8_warn("could not find \"scope_info\"");
-		return (-1);
+		return (NULL);
 	}
 
 	if (read_heap_ptr(&shared, closure, V8_OFF_JSFUNCTION_SHARED) != 0 ||
 	    read_heap_ptr(&scopeinfo, shared,
-	    V8_OFF_SHAREDFUNCTIONINFO_SCOPE_INFO) != 0 ||
-	    v8scopeinfo_load(scopeinfo, sip, memflags) != 0) {
-		return (-1);
+	    V8_OFF_SHAREDFUNCTIONINFO_SCOPE_INFO) != 0) {
+		return (NULL);
 	}
 
-	return (0);
+	return (v8scopeinfo_load(scopeinfo, memflags));
 }

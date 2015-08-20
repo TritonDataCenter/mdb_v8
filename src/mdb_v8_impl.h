@@ -19,6 +19,18 @@
 #define	_MDBV8IMPL_H
 
 /*
+ * We hard-code our MDB_API_VERSION to be 3 to allow this module to be
+ * compiled on systems with higher version numbers, but still allow the
+ * resulting binary object to be used on older systems.  (We do not make use
+ * of functionality present in versions later than 3.)  This is particularly
+ * important for mdb_v8 because (1) it's used in particular to debug
+ * application-level software and (2) it has a history of rapid evolution.
+ */
+#define	MDB_API_VERSION		3
+
+#include <sys/mdb_modapi.h>
+
+/*
  * XXX Cleanup work to be done on these:
  * - prefix these function names
  * - normalize their names, calling patterns, and argument types

@@ -20,17 +20,8 @@
  * their corresponding repositories.
  */
 
-/*
- * We hard-code our MDB_API_VERSION to be 3 to allow this module to be
- * compiled on systems with higher version numbers, but still allow the
- * resulting binary object to be used on older systems.  (We do not make use
- * of functionality present in versions later than 3.)  This is particularly
- * important for mdb_v8 because (1) it's used in particular to debug
- * application-level software and (2) it has a history of rapid evolution.
- */
-#define	MDB_API_VERSION		3
+#include "mdb_v8_impl.h"
 
-#include <sys/mdb_modapi.h>
 #include <assert.h>
 #include <ctype.h>
 #include <inttypes.h>
@@ -45,7 +36,6 @@
 #include "v8cfg.h"
 #include "mdb_v8_version.h"
 #include "mdb_v8_dbg.h"
-#include "mdb_v8_impl.h"
 
 #define	offsetof(s, m)	((size_t)(&(((s *)0)->m)))
 
@@ -3665,14 +3655,14 @@ static int do_v8scopeinfo_var_print(v8scopeinfo_t *, v8scopeinfo_var_t *,
 static int
 dcmd_v8scopeinfo(uintptr_t addr, uint_t flags, int argc, const mdb_arg_t *argv)
 {
-	v8scopeinfo_t si;
+	v8scopeinfo_t *sip;
 
-	if (v8scopeinfo_load(addr, &si, UM_SLEEP | UM_GC) != 0) {
+	if ((sip = v8scopeinfo_load(addr, UM_SLEEP | UM_GC)) == NULL) {
 		mdb_warn("failed to load ScopeInfo");
 		return (DCMD_ERR);
 	}
 
-	if (v8scopeinfo_iter_groups(&si, do_v8scopeinfo_group_print,
+	if (v8scopeinfo_iter_groups(sip, do_v8scopeinfo_group_print,
 	    NULL) != 0) {
 		mdb_warn("failed to walk scope info");
 		return (DCMD_ERR);
@@ -3727,16 +3717,16 @@ static int do_v8context_dynamic_slot(v8context_t *, uint_t, uintptr_t, void *);
 static int
 dcmd_v8context(uintptr_t addr, uint_t flags, int argc, const mdb_arg_t *argv)
 {
-	v8context_t ctx;
+	v8context_t *ctxp;
 
-	if (v8context_load(addr, &ctx, UM_SLEEP | UM_GC) != 0) {
+	if ((ctxp = v8context_load(addr, UM_SLEEP | UM_GC)) == NULL) {
 		mdb_warn("failed to load Context\n");
 		return (DCMD_ERR);
 	}
 
-	if (v8context_iter_static_slots(&ctx, do_v8context_static_slot,
+	if (v8context_iter_static_slots(ctxp, do_v8context_static_slot,
 	    NULL) != 0 ||
-	    v8context_iter_dynamic_slots(&ctx, do_v8context_dynamic_slot,
+	    v8context_iter_dynamic_slots(ctxp, do_v8context_dynamic_slot,
 	    NULL) != 0) {
 		mdb_warn("failed to iterate context\n");
 		return (DCMD_ERR);
@@ -5288,22 +5278,22 @@ jsclosure_iter_var(v8scopeinfo_t *sip, v8scopeinfo_var_t *sivp, void *arg)
 static int
 dcmd_jsclosure(uintptr_t addr, uint_t flags, int argc, const mdb_arg_t *argv)
 {
-	v8context_t ctx;
-	v8scopeinfo_t scope;
+	v8context_t *ctxp;
+	v8scopeinfo_t *sip;
 	int memflags = UM_SLEEP | UM_GC;
 
-	if (v8function_context(addr, &ctx, memflags) != 0) {
+	if ((ctxp = v8function_context(addr, memflags)) == NULL) {
 		mdb_warn("%p: failed to load Context for JSFunction\n", addr);
 		return (DCMD_ERR);
 	}
 
-	if (v8context_scopeinfo(&ctx, &scope, memflags) != 0) {
+	if ((sip = v8context_scopeinfo(ctxp, memflags)) == NULL) {
 		mdb_warn("%p: failed to load ScopeInfo\n", addr);
 		return (DCMD_ERR);
 	}
 
-	if (v8scopeinfo_iter_vars(&scope, V8SV_CONTEXTLOCALS,
-	    jsclosure_iter_var, &ctx) != 0) {
+	if (v8scopeinfo_iter_vars(sip, V8SV_CONTEXTLOCALS,
+	    jsclosure_iter_var, ctxp) != 0) {
 		mdb_warn("%p: failed to iterate closure variables\n", addr);
 		return (DCMD_ERR);
 	}
