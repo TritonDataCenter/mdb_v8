@@ -120,9 +120,7 @@ v8context_load(uintptr_t addr, int memflags)
 	return (ctxp);
 
 err:
-	/* XXX This pattern should be cleaned up. */
-	if (!(memflags & UM_GC))
-		mdb_free(ctxp, sizeof (*ctxp));
+	maybefree(ctxp, sizeof (*ctxp), memflags);
 	return (NULL);
 }
 
@@ -290,9 +288,7 @@ v8scopeinfo_load(uintptr_t addr, int memflags)
 	return (sip);
 
 err:
-	/* XXX This pattern should be cleaned up. */
-	if (!(memflags & UM_GC))
-		mdb_free(sip, sizeof (*sip));
+	maybefree(sip, sizeof (*sip), memflags);
 	return (NULL);
 }
 

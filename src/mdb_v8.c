@@ -1109,6 +1109,13 @@ bsnprintf(char **bufp, size_t *buflenp, const char *format, ...)
 }
 
 void
+maybefree(void *arg, size_t sz, int memflags)
+{
+	if (!(memflags & UM_GC))
+		mdb_free(arg, sz);
+}
+
+void
 v8_warn(const char *format, ...)
 {
 	char buf[512];
@@ -1254,9 +1261,7 @@ read_heap_array(uintptr_t addr, uintptr_t **retp, size_t *lenp, int flags)
 
 	if (mdb_vread(*retp, len * sizeof (uintptr_t),
 	    addr + V8_OFF_FIXEDARRAY_DATA) == -1) {
-		if (!(flags & UM_GC))
-			mdb_free(*retp, len * sizeof (uintptr_t));
-
+		maybefree(*retp, len * sizeof (uintptr_t), flags);
 		*retp = NULL;
 		return (-1);
 	}

@@ -36,6 +36,7 @@
  * - normalize their names, calling patterns, and argument types
  * - add the other related functions
  */
+void maybefree(void *, size_t, int);
 int read_heap_array(uintptr_t, uintptr_t **, size_t *, int);
 int read_heap_ptr(uintptr_t *, uintptr_t, ssize_t);
 int read_typebyte(uint8_t *, uintptr_t);
