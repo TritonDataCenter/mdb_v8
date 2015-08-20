@@ -184,6 +184,9 @@ v8context_scopeinfo(v8context_t *ctxp, int memflags)
 
 	closure = v8context_closure(ctxp);
 	funcp = v8function_load(closure, memflags);
+	if (funcp == NULL) {
+		return (NULL);
+	}
 	sip = v8function_scopeinfo(funcp, memflags);
 	v8function_free(funcp);
 	return (sip);
