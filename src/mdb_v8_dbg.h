@@ -23,7 +23,7 @@
  * Addresses in the target program are represented as "uintptr_t".  Most of
  * these are either V8 small integers (see V8_IS_SMI() and V8_SMI_VALUE()) or
  * other V8 heap objects.  A number of functions exists to inspect and dump
- * these, but they have not been abstracted here.
+ * these, but they have not yet been abstracted here.
  *
  * Functions here fall into one of two categories: functions that return "int"
  * (or a pointer that may be NULL) can generally fail because of a validation
@@ -35,7 +35,7 @@
  * that the target's address space is not arbitrarily corrupt.
  */
 
-#ifndef _MDBV8DBG_H
+#ifndef	_MDBV8DBG_H
 #define	_MDBV8DBG_H
 
 /*
@@ -144,4 +144,4 @@ void v8function_free(v8function_t *);
 v8context_t *v8function_context(v8function_t *, int);
 v8scopeinfo_t *v8function_scopeinfo(v8function_t *, int);
 
-#endif /* _MDBV8DBG_H */
+#endif	/* _MDBV8DBG_H */

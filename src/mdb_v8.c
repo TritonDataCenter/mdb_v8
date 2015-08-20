@@ -3676,7 +3676,8 @@ dcmd_v8scopeinfo(uintptr_t addr, uint_t flags, int argc, const mdb_arg_t *argv)
 	return (DCMD_OK);
 }
 
-static int do_v8scopeinfo_vartype_print(v8scopeinfo_t *sip,
+static int
+do_v8scopeinfo_vartype_print(v8scopeinfo_t *sip,
     v8scopeinfo_vartype_t scopevartype, void *arg)
 {
 	size_t nvars;

@@ -15,7 +15,7 @@
  * MDB-agnostic.
  */
 
-#ifndef _MDBV8IMPL_H
+#ifndef	_MDBV8IMPL_H
 #define	_MDBV8IMPL_H
 
 /*
@@ -70,4 +70,4 @@ extern intptr_t V8_SmiTagMask;
 extern intptr_t V8_SmiValueShift;
 extern intptr_t V8_SmiShiftSize;
 
-#endif /* _MDBV8IMPL_H */
+#endif	/* _MDBV8IMPL_H */
