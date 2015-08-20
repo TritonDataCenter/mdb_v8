@@ -14,6 +14,10 @@
 
 None so far.
 
+## v0.11.0 (2015-08-20)
+
+* #17 add information about closures and their variables
+
 ## v0.10.0 (2015-07-17)
 
 * #10 some JSDate objects are not printed
