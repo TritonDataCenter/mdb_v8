@@ -5577,10 +5577,12 @@ dcmd_jsfunctions(uintptr_t addr, uint_t flags, int argc, const mdb_arg_t *argv)
 	findjsobjects_func_t *func;
 	uintptr_t funcinfo;
 	boolean_t showrange = B_FALSE;
+	boolean_t listlike = B_FALSE;
 	const char *name = NULL, *filename = NULL;
 	uintptr_t instr = 0;
 
 	if (mdb_getopts(argc, argv,
+	    'l', MDB_OPT_SETBITS, B_TRUE, &listlike,
 	    'x', MDB_OPT_UINTPTR, &instr,
 	    'X', MDB_OPT_SETBITS, B_TRUE, &showrange,
 	    'n', MDB_OPT_STR, &name,
@@ -5591,15 +5593,41 @@ dcmd_jsfunctions(uintptr_t addr, uint_t flags, int argc, const mdb_arg_t *argv)
 	if (findjsobjects_run(fjs) != 0)
 		return (DCMD_ERR);
 
-	if (!showrange)
+	if (listlike && !(flags & DCMD_ADDRSPEC) &&
+	    (name != NULL || filename != NULL || instr != 0)) {
+		mdb_warn("cannot specify -l with -n, -f, or -x\n");
+		return (DCMD_ERR);
+	}
+
+	if (flags & DCMD_ADDRSPEC) {
+		listlike = B_TRUE;
+	}
+
+	if (!showrange && !listlike) {
 		mdb_printf("%?s %8s %-40s %s\n", "FUNC", "#FUNCS", "NAME",
 		    "FROM");
-	else
+	} else if (!listlike) {
 		mdb_printf("%?s %8s %?s %?s %-40s %s\n", "FUNC", "#FUNCS",
 		    "START", "END", "NAME", "FROM");
+	}
 
 	for (func = fjs->fjs_funcs; func != NULL; func = func->fjsf_next) {
 		uintptr_t code, ilen;
+
+		if (listlike && (flags & DCMD_ADDRSPEC) != 0) {
+			findjsobjects_instance_t *inst;
+
+			if (addr != func->fjsf_instances.fjsi_addr) {
+				continue;
+			}
+
+			for (inst = &func->fjsf_instances;
+			    inst != NULL; inst = inst->fjsi_next) {
+				mdb_printf("%?p\n", inst->fjsi_addr);
+			}
+
+			continue;
+		}
 
 		funcinfo = func->fjsf_shared;
 
@@ -5649,7 +5677,9 @@ dcmd_jsfunctions(uintptr_t addr, uint_t flags, int argc, const mdb_arg_t *argv)
 		    instr >= code + V8_OFF_CODE_INSTRUCTION_START + ilen))
 			continue;
 
-		if (!showrange) {
+		if (listlike) {
+			mdb_printf("%?p\n", func->fjsf_instances.fjsi_addr);
+		} else if (!showrange) {
 			mdb_printf("%?p %8d %-40s %s %s\n",
 			    func->fjsf_instances.fjsi_addr,
 			    func->fjsf_ninstances, func->fjsf_funcname,
@@ -5707,6 +5737,8 @@ dcmd_jsfunctions_help(void)
 	mdb_inc_indent(2);
 
 	mdb_printf("%s\n",
+"  -l       List only closures (without other columns).  With ADDR, list\n"
+"           closures for the representative function ADDR.\n"
 "  -n func  List functions whose name contains this substring\n"
 "  -s file  List functions that were defined in a file whose name contains\n"
 "           this substring.\n"
@@ -6076,7 +6108,7 @@ static const mdb_dcmd_t v8_mdb_dcmds[] = {
 		"print a JavaScript stacktrace", dcmd_jsstack },
 	{ "findjsobjects", "?[-vb] [-r | -c cons | -p prop]", "find JavaScript "
 		"objects", dcmd_findjsobjects, dcmd_findjsobjects_help },
-	{ "jsfunctions", "[-X] [-s file_filter] [-n name_filter] "
+	{ "jsfunctions", "?[-X] [-s file_filter] [-n name_filter] "
 	    "[-x instr_filter]", "list JavaScript functions",
 	    dcmd_jsfunctions, dcmd_jsfunctions_help },
 

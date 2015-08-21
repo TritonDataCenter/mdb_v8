@@ -12,7 +12,11 @@
 
 ## Unreleased changes
 
-None so far.
+* #20 want ::jsfunctions -l
+
+## v0.11.1 (2015-08-20)
+
+* #18 ::jsfunctions help text does not agree with implementation
 
 ## v0.11.0 (2015-08-20)
 

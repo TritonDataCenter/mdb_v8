@@ -638,6 +638,7 @@ The "-a", "-v", "-f", "-p", and "-n" arguments are exactly the same as for
 ### jsfunctions
 
     ::jsfunctions [-X] [-s file_filter] [-n name_filter] [-x instr_filter]
+    [ADDR]::jsfunctions -l
 
 Lists JavaScript functions, optionally filtered by a substring of the
 function name or script filename or by the instruction address.  This uses
@@ -661,8 +662,14 @@ name, or instruction addresses.  The "-x" flag is useful for mapping stack
 traces collected with other tools (e.g., libumem debugging tools) back to
 JavaScript functions.
 
+The "-l" option allows you to list the closures themselves (without the extra
+columns), as with `findjsobjects`.  You can also use this mode with a
+representative closure address to enumerate all closures for the same function.
+
 Option summary:
 
+    -l       List only closures (without other columns).  With ADDR, list
+             closures for the representative function ADDR.
     -s file  List functions that were defined in a file whose name contains
              this substring.
     -n func  List functions whose name contains this substring
