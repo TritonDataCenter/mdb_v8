@@ -5221,6 +5221,82 @@ dcmd_findjsobjects(uintptr_t addr,
 	return (DCMD_OK);
 }
 
+/*
+ * Emits a dump of all objects found in the heap.  This may contain a lot of
+ * garbage primitive objects, but they will likely not be referenced by actual
+ * Objects or Arrays.
+ *
+ * The output is newline-separated CSV-like output with one value per line.  The
+ * output starts with the header lines:
+ *
+ *     MDBV8HEAP 1.0
+ *     begin
+ *
+ * Following that are "nodes" and "edges", which look like:
+ *
+ *     "node" <node-type> <address> <type-specific-properties>
+ *     "edge" <edge-type> <from-address> <label> addr <address>
+ *     "edge" <edge-type> <from-address> <label> SMI <decimal integer>
+ *
+ * In general:
+ *
+ *     o Nodes represent values.
+ *
+ *     o Edges represent object properties, array elements, or closure
+ *       variables.
+ *
+ *     o Strings are JSON-encoded.
+ *
+ * Specific nodes look like:
+ *
+ *     # HeapNumber (floating point values)
+ *     "node" "heapnumber" 89d129a1 2.38318
+ *
+ *     # String values (value is JSON-encoded)
+ *     node "string" b862787d "foo"
+ *
+ *     # Function (closure) values (variables represented with edges)
+ *     node "function" a672467d "startup" "node.js position 1446"
+ *
+ *     # Array value (having length 2, elements represented with edges)
+ *     node "array" a67396cd 2
+ *
+ *     # Date value
+ *     node "date" a6781ddd "2015 Jul 17 15:55:42.343"
+ *
+ *     # Object value (properties represented with edges)
+ *     node "object" b7a25551 constructor "Buffer"
+ *
+ *     # Regular expression value
+ *     node "regexp" b7a28f4d
+ *
+ *     # Oddball values (undefined, null, true, false)
+ *     node "oddball" b7a08081 "null"
+ *
+ * Specific edges look like:
+ *
+ *     # Object property (value is an SMI)
+ *     edge "property" 86e0ab0d "version" SMI 11
+ *
+ *     # Object property (value is another heap object)
+ *     edge "property" 86e0ab0d "versions" addr b8617d9d
+ *
+ *     # Array element (value is an SMI)
+ *     edge "element" a6718901 "3" SMI 7
+ *
+ *     # Array element (value is another heap object)
+ *     edge "element" a67188f1 "1" addr b86082f9
+ *
+ *     # Closure variable (value is an SMI)
+ *     edge "closure variable" a6728ec5 "defaultMaxListeners" SMI 10
+ *
+ *     # Closure variable (value is another heap object)
+ *     edge "closure variable" b7a37871 "self" addr a677f8d5
+ *
+ * The dump ends with this line:
+ *
+ *     end
+ */
 static int
 dcmd_jsheapdump(uintptr_t addr, uint_t flags, int argc,
     const mdb_arg_t *argv)
@@ -5410,7 +5486,7 @@ jsheapdump_date(findjsobjects_state_t *fjs, uintptr_t addr)
 	    (time_t)((long long)numval / MILLISEC),
 	    ((long long) numval) % MILLISEC);
 	jsheapdump_node_begin(fjs, "date", addr);
-	jsheapdump_emit(fjs, " %s", buf);
+	jsheapdump_emit(fjs, " \"%s\"", buf);
 	jsheapdump_node_end(fjs);
 	return (0);
 }
