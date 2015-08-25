@@ -21,9 +21,10 @@
 #include "mdb_v8_impl.h"
 
 struct v8context {
-	uintptr_t	v8ctx_addr;	/* Context address in target process */
-	uintptr_t	*v8ctx_elts;	/* Copied-in array of context slots */
-	size_t		v8ctx_nelts;	/* Count of context slots */
+	uintptr_t	v8ctx_addr;	/* context address in target process */
+	uintptr_t	*v8ctx_elts;	/* copied-in array of context slots */
+	size_t		v8ctx_nelts;	/* count of context slots */
+	int		v8ctx_memflags;	/* memory allocation flags */
 };
 
 /*
@@ -48,8 +49,9 @@ static size_t v8context_nfields =
 
 struct v8scopeinfo {
 	uintptr_t	v8si_addr;	/* ScopeInfo address in target proc */
-	uintptr_t	*v8si_elts;	/* Copied-in array of slots */
-	size_t		v8si_nelts;	/* Count of slots */
+	uintptr_t	*v8si_elts;	/* copied-in array of slots */
+	size_t		v8si_nelts;	/* count of slots */
+	int		v8si_memflags;	/* memory allocation flags */
 };
 
 /*
@@ -127,8 +129,21 @@ v8context_load(uintptr_t addr, int memflags)
 	return (ctxp);
 
 err:
-	maybefree(ctxp, sizeof (*ctxp), memflags);
+	v8context_free(ctxp);
 	return (NULL);
+}
+
+void
+v8context_free(v8context_t *ctxp)
+{
+	if (ctxp == NULL) {
+		return;
+	}
+
+	maybefree(ctxp->v8ctx_elts,
+	    ctxp->v8ctx_nelts * sizeof (ctxp->v8ctx_elts[0]),
+	    ctxp->v8ctx_memflags);
+	maybefree(ctxp, sizeof (*ctxp), ctxp->v8ctx_memflags);
 }
 
 /*
@@ -283,6 +298,7 @@ v8scopeinfo_load(uintptr_t addr, int memflags)
 		return (NULL);
 	}
 
+	sip->v8si_memflags = memflags;
 	sip->v8si_addr = addr;
 	if (read_heap_array(addr,
 	    &sip->v8si_elts, &sip->v8si_nelts, memflags) != 0) {
@@ -304,8 +320,20 @@ v8scopeinfo_load(uintptr_t addr, int memflags)
 	return (sip);
 
 err:
-	maybefree(sip, sizeof (*sip), memflags);
+	v8scopeinfo_free(sip);
 	return (NULL);
+}
+
+void
+v8scopeinfo_free(v8scopeinfo_t *sip)
+{
+	if (sip == NULL) {
+		return;
+	}
+
+	maybefree(sip->v8si_elts,
+	    sip->v8si_nelts * sizeof (sip->v8si_elts[0]), sip->v8si_memflags);
+	maybefree(sip, sizeof (*sip), sip->v8si_memflags);
 }
 
 /*

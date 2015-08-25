@@ -5415,10 +5415,115 @@ jsheapdump_date(findjsobjects_state_t *fjs, uintptr_t addr)
 	return (0);
 }
 
+typedef struct jsheapdump_func_var_arg {
+	uintptr_t		jshd_dumpaddr;
+	findjsobjects_state_t	*jshd_fjs;
+	v8context_t		*jshd_ctxp;
+} jsheapdump_func_var_arg_t;
+
+static int
+jsheapdump_func_var(v8scopeinfo_t *sip, v8scopeinfo_var_t *sivp,
+    void *arg)
+{
+	char buf[128];
+	char *bufp;
+	size_t bufsz;
+	uintptr_t namep, validx, val;
+	jsheapdump_func_var_arg_t *argp = arg;
+
+	bufp = buf;
+	bufsz = sizeof (buf);
+	namep = v8scopeinfo_var_name(sip, sivp);
+	if (jsstr_print(namep, JSSTR_NUDE, &bufp, &bufsz) != 0 ||
+	    strchr(buf, '\n') != NULL || strchr(buf, '"') != NULL) {
+		return (-1);
+	}
+
+	validx = v8scopeinfo_var_idx(sip, sivp);
+	if (v8context_var_value(argp->jshd_ctxp, validx, &val) != 0) {
+		return (-1);
+	}
+
+	jsheapdump_edge(argp->jshd_fjs, "closure variable", buf,
+	    argp->jshd_dumpaddr, val);
+	return (0);
+}
+
 static int
 jsheapdump_function(findjsobjects_state_t *fjs, uintptr_t addr)
 {
-	return (-1);
+	uintptr_t funcinfo, script, tokpos, lends, scriptname;
+	char buf[512];
+	char *bufp;
+	size_t bufsz;
+	int rv;
+	v8function_t *funcp;
+	v8context_t *ctxp;
+	v8scopeinfo_t *sip;
+
+	if (read_heap_ptr(&funcinfo, addr, V8_OFF_JSFUNCTION_SHARED) != 0 ||
+	    read_heap_maybesmi(&tokpos, funcinfo,
+	    V8_OFF_SHAREDFUNCTIONINFO_FUNCTION_TOKEN_POSITION) != 0 ||
+	    read_heap_ptr(&script, funcinfo,
+	    V8_OFF_SHAREDFUNCTIONINFO_SCRIPT) != 0 ||
+	    read_heap_ptr(&scriptname, script, V8_OFF_SCRIPT_NAME) != 0 ||
+	    read_heap_ptr(&lends, script, V8_OFF_SCRIPT_LINE_ENDS) != 0) {
+		return (-1);
+	}
+
+	tokpos = V8_VALUE_SMI(tokpos);
+	bufp = buf;
+	bufsz = sizeof (buf);
+	if (jsfunc_name(funcinfo, &bufp, &bufsz) != 0 ||
+	    strchr(buf, '"') != NULL) {
+		return (-1);
+	}
+
+	jsheapdump_node_begin(fjs, "function", addr);
+	jsheapdump_emit(fjs, " \"%s\"", buf);
+
+	bufp = buf;
+	bufsz = bufsz;
+	if (jsstr_print(scriptname, JSSTR_NUDE, &bufp, &bufsz) != 0 ||
+	    strchr(buf, '"') != NULL || strchr(buf, '\n') != NULL) {
+		return (-1);
+	}
+
+	jsheapdump_emit(fjs, " \"%s", buf);
+
+	if (jsfunc_lineno(lends, tokpos, buf, sizeof (buf), NULL) != 0) {
+		return (-1);
+	}
+
+	jsheapdump_emit(fjs, " %s\"", buf);
+	jsheapdump_node_end(fjs);
+
+	funcp = NULL;
+	ctxp = NULL;
+	sip = NULL;
+
+	funcp = v8function_load(addr, UM_SLEEP);
+	if (funcp != NULL) {
+		ctxp = v8function_context(funcp, UM_SLEEP);
+	}
+
+	if (ctxp != NULL) {
+		sip = v8context_scopeinfo(ctxp, UM_SLEEP);
+	}
+
+	if (sip != NULL) {
+		jsheapdump_func_var_arg_t arg;
+		arg.jshd_dumpaddr = addr;
+		arg.jshd_fjs = fjs;
+		arg.jshd_ctxp = ctxp;
+		rv = v8scopeinfo_iter_vars(sip, V8SV_CONTEXTLOCALS,
+		    jsheapdump_func_var, &arg);
+	}
+
+	v8function_free(funcp);
+	v8context_free(ctxp);
+	v8scopeinfo_free(sip);
+	return (rv);
 }
 
 static int
