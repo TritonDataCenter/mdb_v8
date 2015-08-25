@@ -1461,14 +1461,14 @@ obj_jsconstructor(uintptr_t addr, char **bufp, size_t *lenp, boolean_t verbose)
 	if (!V8_IS_HEAPOBJECT(addr) ||
 	    read_typebyte(&type, addr) != 0 ||
 	    (type != V8_TYPE_JSOBJECT && type != V8_TYPE_JSARRAY)) {
-		mdb_warn("%p is not a JSObject\n", addr);
+		v8_warn("%p is not a JSObject\n", addr);
 		return (-1);
 	}
 
 	if (mdb_vread(&map, sizeof (map), addr + V8_OFF_HEAPOBJECT_MAP) == -1 ||
 	    mdb_vread(&consfunc, sizeof (consfunc),
 	    map + V8_OFF_MAP_CONSTRUCTOR) == -1) {
-		mdb_warn("unable to read object map\n");
+		v8_warn("unable to read object map\n");
 		return (-1);
 	}
 
@@ -1485,7 +1485,7 @@ obj_jsconstructor(uintptr_t addr, char **bufp, size_t *lenp, boolean_t verbose)
 	}
 
 	if (strcmp(constype, "JSFunction") != 0) {
-		mdb_warn("constructor: expected JSFunction, found %s\n",
+		v8_warn("constructor: expected JSFunction, found %s\n",
 		    constype);
 		return (-1);
 	}
@@ -4212,6 +4212,7 @@ typedef struct findjsobjects_referent {
 typedef struct findjsobjects_state {
 	uintptr_t fjs_addr;
 	uintptr_t fjs_size;
+	boolean_t fjs_dumponly;
 	boolean_t fjs_verbose;
 	boolean_t fjs_brk;
 	boolean_t fjs_allobjs;
@@ -4227,7 +4228,14 @@ typedef struct findjsobjects_state {
 	findjsobjects_obj_t *fjs_objects;
 	findjsobjects_func_t *fjs_funcs;
 	findjsobjects_stats_t fjs_stats;
+	uintptr_t fjs_dumpaddr;
+	char *fjs_dump_buf;
+	char *fjs_dump_curbuf;
+	size_t fjs_dump_bufsz;
+	size_t fjs_dump_curbufsz;
 } findjsobjects_state_t;
+
+static void jsheapdump_value(findjsobjects_state_t *, uintptr_t, uint8_t);
 
 findjsobjects_obj_t *
 findjsobjects_alloc(uintptr_t addr)
@@ -4514,6 +4522,11 @@ findjsobjects_range(findjsobjects_state_t *fjs, uintptr_t addr, uintptr_t size)
 		} else {
 			if (mdb_vread(&type, sizeof (uint8_t), mapaddr) == -1)
 				continue;
+		}
+
+		if (fjs->fjs_dumponly) {
+			jsheapdump_value(fjs, addr, type);
+			continue;
 		}
 
 		if (type == jsfunction) {
@@ -4969,7 +4982,7 @@ findjsobjects_run(findjsobjects_state_t *fjs)
 	findjsobjects_obj_t *obj;
 	findjsobjects_stats_t *stats = &fjs->fjs_stats;
 
-	if (!fjs->fjs_initialized) {
+	if (!fjs->fjs_dumponly && !fjs->fjs_initialized) {
 		avl_create(&fjs->fjs_tree,
 		    (int(*)(const void *, const void *))findjsobjects_cmp,
 		    sizeof (findjsobjects_obj_t),
@@ -4990,7 +5003,7 @@ findjsobjects_run(findjsobjects_state_t *fjs)
 		fjs->fjs_initialized = B_TRUE;
 	}
 
-	if (avl_is_empty(&fjs->fjs_tree)) {
+	if (fjs->fjs_dumponly || avl_is_empty(&fjs->fjs_tree)) {
 		findjsobjects_obj_t **sorted;
 		int nobjs, i;
 		hrtime_t start = gethrtime();
@@ -5002,10 +5015,20 @@ findjsobjects_run(findjsobjects_state_t *fjs)
 
 		v8_silent++;
 
+		if (fjs->fjs_dumponly) {
+			mdb_printf("MDBV8HEAP 1.0\nbegin\n");
+		}
+
 		if (Pmapping_iter(Pr,
 		    (proc_map_f *)findjsobjects_mapping, fjs) != 0) {
 			v8_silent--;
 			return (-1);
+		}
+
+		if (fjs->fjs_dumponly) {
+			mdb_printf("end\n");
+			v8_silent--;
+			return (0);
 		}
 
 		if ((nobjs = avl_numnodes(&fjs->fjs_tree)) != 0) {
@@ -5196,6 +5219,335 @@ dcmd_findjsobjects(uintptr_t addr,
 	}
 
 	return (DCMD_OK);
+}
+
+static int
+dcmd_jsheapdump(uintptr_t addr, uint_t flags, int argc,
+    const mdb_arg_t *argv)
+{
+	findjsobjects_state_t heapdump;
+	char buf[1024];
+
+	bzero(&heapdump, sizeof (heapdump));
+	bzero(buf, sizeof (buf));
+	heapdump.fjs_dumponly = B_TRUE;
+	heapdump.fjs_dump_buf = buf;
+	heapdump.fjs_dump_bufsz = sizeof (buf);
+	return (findjsobjects_run(&heapdump));
+}
+
+static void jsheapdump_node_begin(findjsobjects_state_t *, const char *,
+    uintptr_t);
+static void jsheapdump_node_end(findjsobjects_state_t *);
+static void jsheapdump_edge(findjsobjects_state_t *, const char *,
+    const char *, uintptr_t, uintptr_t);
+
+static int jsheapdump_heapnumber(findjsobjects_state_t *, uintptr_t);
+static int jsheapdump_array(findjsobjects_state_t *, uintptr_t);
+static int jsheapdump_date(findjsobjects_state_t *, uintptr_t);
+static int jsheapdump_function(findjsobjects_state_t *, uintptr_t);
+static int jsheapdump_object(findjsobjects_state_t *, uintptr_t);
+static int jsheapdump_regexp(findjsobjects_state_t *, uintptr_t);
+static int jsheapdump_oddball(findjsobjects_state_t *, uintptr_t);
+static int jsheapdump_string(findjsobjects_state_t *, uintptr_t);
+
+static void
+jsheapdump_value(findjsobjects_state_t *fjs, uintptr_t addr, uint8_t type)
+{
+	int i;
+
+	/*
+	 * XXX what to do about oddballs?
+	 * XXX what to do about dates, heapnumbers, SMIs
+	 */
+	const struct {
+		uint8_t type;
+		int (*func)(findjsobjects_state_t *, uintptr_t);
+	} table[] = {
+		{ V8_TYPE_HEAPNUMBER,	jsheapdump_heapnumber	},
+		{ V8_TYPE_JSARRAY,	jsheapdump_array	},
+		{ V8_TYPE_JSDATE,	jsheapdump_date		},
+		{ V8_TYPE_JSFUNCTION,	jsheapdump_function	},
+		{ V8_TYPE_JSOBJECT,	jsheapdump_object	},
+		{ V8_TYPE_JSREGEXP,	jsheapdump_regexp	},
+		{ V8_TYPE_ODDBALL,	jsheapdump_oddball	}
+	};
+
+	if (V8_TYPE_STRING(type)) {
+		jsheapdump_string(fjs, addr);
+		return;
+	}
+
+	for (i = 0; i < sizeof (table) / sizeof (table[0]); i++) {
+		if (table[i].type == type) {
+			table[i].func(fjs, addr);
+			return;
+		}
+	}
+}
+
+static void
+jsheapdump_node_begin(findjsobjects_state_t *fjs, const char *type,
+    uintptr_t addr)
+{
+	fjs->fjs_dump_curbuf = fjs->fjs_dump_buf;
+	fjs->fjs_dump_curbufsz = fjs->fjs_dump_bufsz;
+	(void) bsnprintf(&fjs->fjs_dump_curbuf,
+	    &fjs->fjs_dump_curbufsz, "node \"%s\" %p", type, addr);
+}
+
+static void
+jsheapdump_node_end(findjsobjects_state_t *fjs)
+{
+	/* XXX check for truncation */
+	mdb_printf("%s\n", fjs->fjs_dump_buf);
+}
+
+static void
+jsheapdump_edge(findjsobjects_state_t *fjs, const char *type,
+    const char *name, uintptr_t from, uintptr_t addr)
+{
+	mdb_printf("edge \"%s\" %p \"%s\" ", type, from, name);
+	if (V8_IS_SMI(addr)) {
+		mdb_printf("SMI %d\n", V8_SMI_VALUE(addr));
+	} else {
+		mdb_printf("addr %p\n", addr);
+	}
+}
+
+static void
+jsheapdump_emit(findjsobjects_state_t *fjs, const char *fmt, ...)
+{
+	va_list alist;
+
+	va_start(alist, fmt);
+	(void) bvsnprintf(&fjs->fjs_dump_curbuf,
+	    &fjs->fjs_dump_curbufsz, fmt, alist);
+	va_end(alist);
+}
+
+/*
+ * XXX commonize with jsobj_print_*?
+ */
+static int
+jsheapdump_heapnumber(findjsobjects_state_t *fjs, uintptr_t addr)
+{
+	char **bufp = &fjs->fjs_dump_curbuf;
+	size_t *lenp = &fjs->fjs_dump_curbufsz;
+	double numval;
+
+	if (read_heap_double(&numval, addr, V8_OFF_HEAPNUMBER_VALUE) == -1)
+		return (-1);
+
+	jsheapdump_node_begin(fjs, "heapnumber", addr);
+
+	if (numval == (long long)numval)
+		(void) bsnprintf(bufp, lenp, " %lld", (long long)numval);
+	else
+		(void) bsnprintf(bufp, lenp, " %e", numval);
+
+	jsheapdump_node_end(fjs);
+	return (0);
+}
+
+static int
+jsheapdump_array(findjsobjects_state_t *fjs, uintptr_t addr)
+{
+	uintptr_t ptr, *elts;
+	size_t i, nelts;
+	char buf[16];
+
+	if (read_heap_ptr(&ptr, addr, V8_OFF_JSOBJECT_ELEMENTS) != 0) {
+		return (-1);
+	}
+
+	if (read_heap_array(ptr, &elts, &nelts, UM_SLEEP) != 0) {
+		return (-1);
+	}
+
+	jsheapdump_node_begin(fjs, "array", addr);
+	jsheapdump_emit(fjs, " %d", nelts);
+	jsheapdump_node_end(fjs);
+
+	for (i = 0; i < nelts; i++) {
+		(void) snprintf(buf, sizeof (buf), "%lld",
+		    (unsigned long long) i);
+		jsheapdump_edge(fjs, "element", buf, addr, elts[i]);
+	}
+
+	mdb_free(elts, nelts * sizeof (elts[0]));
+	return (0);
+}
+
+static int
+jsheapdump_date(findjsobjects_state_t *fjs, uintptr_t addr)
+{
+	uint8_t type;
+	uintptr_t value;
+	double numval;
+	char buf[128];
+
+	if (V8_OFF_JSDATE_VALUE == -1) {
+		return (-1);
+	}
+
+	if (read_heap_ptr(&value, addr, V8_OFF_JSDATE_VALUE) != 0) {
+		return (-1);
+	}
+
+	if (V8_IS_SMI(value)) {
+		numval = V8_SMI_VALUE(value);
+	} else {
+		if (read_typebyte(&type, value) != 0 ||
+		    type != V8_TYPE_HEAPNUMBER ||
+		    read_heap_double(&numval, value,
+		    V8_OFF_HEAPNUMBER_VALUE) == -1) {
+			return (-1);
+		}
+	}
+
+	mdb_snprintf(buf, sizeof (buf), "%Y.%03d",
+	    (time_t)((long long)numval / MILLISEC),
+	    ((long long) numval) % MILLISEC);
+	jsheapdump_node_begin(fjs, "date", addr);
+	jsheapdump_emit(fjs, " %s", buf);
+	jsheapdump_node_end(fjs);
+	return (0);
+}
+
+static int
+jsheapdump_function(findjsobjects_state_t *fjs, uintptr_t addr)
+{
+	return (-1);
+}
+
+static int
+jsheapdump_object_prop(const char *propname, uintptr_t propval, void *arg)
+{
+	findjsobjects_state_t *fjs = arg;
+	if (propname == NULL)
+		propname = "<unknown>";
+
+	/* XXX See check in findjsobjects_prop(). */
+	if (propval == NULL && propname[0] == '<')
+		return (-1);
+
+	if (fjs->fjs_dumpaddr == 0)
+		return (0);
+
+	jsheapdump_edge(fjs, "property", propname, fjs->fjs_dumpaddr, propval);
+	return (0);
+}
+
+static int
+jsheapdump_object(findjsobjects_state_t *fjs, uintptr_t addr)
+{
+	char buf[128];
+	char *bufp = buf;
+	size_t bufsz = sizeof (buf);
+	jspropinfo_t propinfo;
+
+	if (obj_jsconstructor(addr, &bufp, &bufsz, B_FALSE) != 0 ||
+	    strchr(buf, '"') != NULL)
+		return (-1);
+
+	/*
+	 * XXX it sucks to make two passes over the objects.
+	 */
+	fjs->fjs_dumpaddr = 0;
+	if (jsobj_properties(addr, jsheapdump_object_prop, fjs,
+	    &propinfo) != 0 ||
+	    (propinfo & (JPI_MAYBE_GARBAGE)) != 0) {
+		return (-1);
+	}
+
+	jsheapdump_node_begin(fjs, "object", addr);
+	jsheapdump_emit(fjs, " constructor \"%s\"", buf);
+	jsheapdump_node_end(fjs);
+
+	fjs->fjs_dumpaddr = addr;
+	if (jsobj_properties(addr, jsheapdump_object_prop, fjs, NULL) != 0) {
+		return (-1);
+	}
+
+	return (0);
+}
+
+static int
+jsheapdump_regexp(findjsobjects_state_t *fjs, uintptr_t addr)
+{
+	jsheapdump_node_begin(fjs, "regexp", addr);
+	jsheapdump_node_end(fjs);
+	return (0);
+}
+
+static int
+jsheapdump_oddball(findjsobjects_state_t *fjs, uintptr_t addr)
+{
+	uintptr_t strptr;
+	char buf[32];
+	char *bufp;
+	size_t len;
+
+	bufp = buf;
+	len = sizeof (buf);
+	if (read_heap_ptr(&strptr, addr, V8_OFF_ODDBALL_TO_STRING) != 0 ||
+	    jsstr_print(strptr, JSSTR_NUDE, &bufp, &len) != 0)
+		return (-1);
+
+	if (strchr(bufp, '"') != NULL)
+		return (-1);
+
+	jsheapdump_node_begin(fjs, "oddball", addr);
+	jsheapdump_emit(fjs, " \"%s\"", buf);
+	jsheapdump_node_end(fjs);
+	return (0);
+}
+
+static int
+jsheapdump_string(findjsobjects_state_t *fjs, uintptr_t addr)
+{
+	char buf[512];
+	char *bufp, *p;
+	size_t len;
+
+	bufp = buf;
+	len = sizeof (buf);
+	if (jsstr_print(addr, JSSTR_NUDE, &bufp, &len) != 0)
+		return (-1);
+
+	jsheapdump_node_begin(fjs, "string", addr);
+	jsheapdump_emit(fjs, " \"");
+	/*
+	 * XXX This escaping should be done by JSSTR_QUOTED or the like
+	 */
+	for (p = &buf[0]; *p != NULL; p++) {
+		if (*p == '"') {
+			jsheapdump_emit(fjs, "\\\"");
+		}
+
+		switch (*p) {
+		case '\n':
+			jsheapdump_emit(fjs, "\\n");
+			break;
+		case '\b':
+			jsheapdump_emit(fjs, "\\b");
+			break;
+		case '\r':
+			jsheapdump_emit(fjs, "\\r");
+			break;
+		default:
+			if (!isascii(*p) || iscntrl(*p)) {
+				jsheapdump_emit(fjs, "?");
+			} else {
+				jsheapdump_emit(fjs, "%c", *p);
+			}
+		}
+	}
+
+	jsheapdump_emit(fjs, "\"");
+	jsheapdump_node_end(fjs);
+	return (0);
 }
 
 /*
@@ -6108,6 +6460,8 @@ static const mdb_dcmd_t v8_mdb_dcmds[] = {
 		"print a JavaScript stacktrace", dcmd_jsstack },
 	{ "findjsobjects", "?[-vb] [-r | -c cons | -p prop]", "find JavaScript "
 		"objects", dcmd_findjsobjects, dcmd_findjsobjects_help },
+	{ "jsheapdump", "dump JavaScript heap information",
+		"dump heap contents for offline processing", dcmd_jsheapdump },
 	{ "jsfunctions", "?[-X] [-s file_filter] [-n name_filter] "
 	    "[-x instr_filter]", "list JavaScript functions",
 	    dcmd_jsfunctions, dcmd_jsfunctions_help },
