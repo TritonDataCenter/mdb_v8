@@ -12,6 +12,8 @@
 
 ## Unreleased changes
 
+* #25 fix ia32 build
+
 * #20 want ::jsfunctions -l
 
 ## v0.11.1 (2015-08-20)

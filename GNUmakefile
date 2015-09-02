@@ -89,6 +89,9 @@ include Makefile.arch.defs
 $(MDBV8_TARGETS_amd64):	CFLAGS	+= -m64
 $(MDBV8_TARGETS_amd64):	SOFLAGS	+= -m64
 
+$(MDBV8_TARGETS_ia32): CFLAGS += -m32
+$(MDBV8_TARGETS_ia32): SOFLAGS += -m32
+
 #
 # DEFINITIONS USED AS RECIPES
 #
