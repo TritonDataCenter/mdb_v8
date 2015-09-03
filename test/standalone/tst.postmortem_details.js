@@ -14,6 +14,9 @@ var os = require('os');
 var path = require('path');
 var util = require('util');
 
+var NODE_MAJOR = Number(process.versions.node.split('.')[0]);
+assert.equal(isNaN(NODE_MAJOR), false);
+
 /*
  * We're going to look specifically for this function and buffer in the core
  * file.
@@ -65,7 +68,7 @@ gcore.on('exit', function (code) {
 
 	var mdb = spawn('mdb', args, { stdio: 'pipe' });
 
-	mdb.stdin.on('end', function (code2) {
+	mdb.on('exit', function (code2) {
 		unlinkSync(tmpfile);
 		var retained = '; core retained as ' + corefile;
 
@@ -117,7 +120,11 @@ gcore.on('exit', function (code) {
 	var verifiers = [];
 	var buffer;
 	verifiers.push(function verifyConstructor(testlines) {
-		assert.deepEqual(testlines, [ 'Buffer' ]);
+		if (NODE_MAJOR < 4) {
+			assert.deepEqual(testlines, [ 'Buffer' ]);
+		} else {
+			assert.deepEqual(testlines, [ 'Uint8Array' ]);
+		}
 	});
 	verifiers.push(function verifyNodebuffer(testlines) {
 		assert.equal(testlines.length, 1);
@@ -185,9 +192,19 @@ gcore.on('exit', function (code) {
 	var mod = util.format('::load %s\n', common.dmodpath());
 	mdb.stdin.write(mod);
 	mdb.stdin.write('!echo test: jsconstructor\n');
-	mdb.stdin.write('::findjsobjects -p my_buffer | ::findjsobjects | ' +
-	    '::jsprint -b length ! awk -F: \'$2 == ' + bufstr.length +
+	// Starting from node v4.0, buffers are actually Uint8Array instances,
+	// and they don't have a "length" property
+	if (NODE_MAJOR < 4) {
+		mdb.stdin.write('::findjsobjects -p my_buffer | ' +
+		'::findjsobjects | ' + '::jsprint -b length ! ' +
+		'awk -F: \'$2 == ' + bufstr.length +
 	    '{ print $1 }\'' + '| head -1 > ' + tmpfile + '\n');
+	} else {
+		mdb.stdin.write('::findjsobjects -p my_buffer | ' +
+		'::findjsobjects | ' + '::jsprint -b ! ' +
+	    'awk -F: \'index($2, "length ' + bufstr.length + '>") > 0 ' +
+	    '{ print $1 }\'' + '| head -1 > ' + tmpfile + '\n');
+	}
 	mdb.stdin.write('::cat ' + tmpfile + ' | ::jsconstructor\n');
 	mdb.stdin.write('!echo test: nodebuffer\n');
 	mdb.stdin.write('::cat ' + tmpfile + ' | ::nodebuffer\n');

@@ -43,7 +43,7 @@ gcore.on('exit', function (code) {
 
 	var mdb = spawn('mdb', args, { stdio: 'pipe' });
 
-	mdb.stdin.on('end', function (code2) {
+	mdb.on('exit', function (code2) {
 		var retained = '; core retained as ' + corefile;
 
 		if (code2 != 0) {

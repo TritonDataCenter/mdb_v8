@@ -154,6 +154,8 @@ intptr_t V8_TYPE_JSREGEXP = -1;
 intptr_t V8_TYPE_HEAPNUMBER = -1;
 intptr_t V8_TYPE_ODDBALL = -1;
 intptr_t V8_TYPE_FIXEDARRAY = -1;
+intptr_t V8_TYPE_MAP = -1;
+intptr_t V8_TYPE_JSTYPEDARRAY = -1;
 
 static intptr_t V8_ELEMENTS_KIND_SHIFT;
 static intptr_t V8_ELEMENTS_KIND_BITCOUNT;
@@ -194,6 +196,7 @@ ssize_t V8_OFF_JSFUNCTION_SHARED;
 ssize_t V8_OFF_JSOBJECT_ELEMENTS;
 ssize_t V8_OFF_JSOBJECT_PROPERTIES;
 ssize_t V8_OFF_MAP_CONSTRUCTOR;
+ssize_t V8_OFF_MAP_CONSTRUCTOR_OR_BACKPOINTER;
 ssize_t V8_OFF_MAP_INOBJECT_PROPERTIES;
 ssize_t V8_OFF_MAP_INSTANCE_ATTRIBUTES;
 ssize_t V8_OFF_MAP_INSTANCE_DESCRIPTORS;
@@ -220,6 +223,7 @@ ssize_t V8_OFF_SHAREDFUNCTIONINFO_NAME;
 ssize_t V8_OFF_SLICEDSTRING_PARENT;
 ssize_t V8_OFF_SLICEDSTRING_OFFSET;
 ssize_t V8_OFF_STRING_LENGTH;
+ssize_t V8_OFF_JSTYPEDARRAY_LENGTH;
 
 /* see node_string.h */
 #define	NODE_OFF_EXTSTR_DATA		sizeof (uintptr_t)
@@ -308,9 +312,9 @@ static v8_constant_t v8_constants[] = {
 	    V8_CONSTANT_FALLBACK(3, 11), 3 },
 	{ &V8_DICT_START_INDEX,		"v8dbg_dict_start_index",
 	    V8_CONSTANT_FALLBACK(3, 11), 3 },
-	{ &V8_PROPINDEX_MASK,		"v8dbg_propindex_mask",
+	{ &V8_PROPINDEX_MASK,		"v8dbg_prop_index_mask",
 	    V8_CONSTANT_FALLBACK(3, 26), 0x3ff00000 },
-	{ &V8_PROPINDEX_SHIFT,		"v8dbg_propindex_shift",
+	{ &V8_PROPINDEX_SHIFT,		"v8dbg_prop_index_shift",
 	    V8_CONSTANT_FALLBACK(3, 26), 20 },
 	{ &V8_ISSHARED_SHIFT,		"v8dbg_isshared_shift",
 	    V8_CONSTANT_FALLBACK(3, 11), 0 },
@@ -377,6 +381,7 @@ typedef struct v8_offset {
 	const char	*v8o_member;
 	boolean_t	v8o_optional;
 	uint32_t	v8o_flags;
+	intptr_t	v8o_fallback;
 } v8_offset_t;
 
 static v8_offset_t v8_offsets[] = {
@@ -415,7 +420,7 @@ static v8_offset_t v8_offsets[] = {
 	{ &V8_OFF_MAP_CONSTRUCTOR,
 	    "Map", "constructor",
 	    B_FALSE, V8_CONSTANT_REMOVED_SINCE(4, 3)},
-	{ &V8_OFF_MAP_CONSTRUCTOR,
+	{ &V8_OFF_MAP_CONSTRUCTOR_OR_BACKPOINTER,
 	    "Map", "constructor_or_backpointer",
 	    B_FALSE, V8_CONSTANT_ADDED_SINCE(4, 3)},
 	{ &V8_OFF_MAP_INOBJECT_PROPERTIES,
@@ -468,6 +473,15 @@ static v8_offset_t v8_offsets[] = {
 	    "SlicedString", "parent", B_TRUE },
 	{ &V8_OFF_STRING_LENGTH,
 	    "String", "length" },
+#ifdef _LP64
+	{ &V8_OFF_JSTYPEDARRAY_LENGTH,
+	    "JSTypedArray", "length",
+	    B_FALSE, V8_CONSTANT_FALLBACK(4, 5), 55 },
+#else
+	{ &V8_OFF_JSTYPEDARRAY_LENGTH,
+	    "JSTypedArray", "length",
+	    B_FALSE, V8_CONSTANT_FALLBACK(4, 5), 27 },
+#endif
 };
 
 static int v8_noffsets = sizeof (v8_offsets) / sizeof (v8_offsets[0]);
@@ -541,6 +555,7 @@ static int jsobj_print_number(uintptr_t, jsobj_print_t *);
 static int jsobj_print_oddball(uintptr_t, jsobj_print_t *);
 static int jsobj_print_jsobject(uintptr_t, jsobj_print_t *);
 static int jsobj_print_jsarray(uintptr_t, jsobj_print_t *);
+static int jsobj_print_jstyped_array(uintptr_t, jsobj_print_t *);
 static int jsobj_print_jsfunction(uintptr_t, jsobj_print_t *);
 static int jsobj_print_jsdate(uintptr_t, jsobj_print_t *);
 static int jsobj_print_jsregexp(uintptr_t, jsobj_print_t *);
@@ -583,6 +598,7 @@ autoconfigure(v8_cfg_t *cfgp)
 	int failed = 0;
 	int constant_optional, constant_removed, constant_added;
 	int offset_optional, offset_removed, offset_added;
+	int offset_fallback;
 	int v8_older, v8_at_least;
 
 	assert(v8_classes == NULL);
@@ -684,6 +700,12 @@ autoconfigure(v8_cfg_t *cfgp)
 
 		if (strcmp(ep->v8e_name, "Oddball") == 0)
 			V8_TYPE_ODDBALL = ep->v8e_value;
+
+		if (strcmp(ep->v8e_name, "Map") == 0)
+			V8_TYPE_MAP = ep->v8e_value;
+
+		if (strcmp(ep->v8e_name, "JSTypedArray") == 0)
+			V8_TYPE_JSTYPEDARRAY = ep->v8e_value;
 	}
 
 	if (V8_TYPE_JSOBJECT == -1) {
@@ -755,7 +777,8 @@ again:
 		offset_optional = offp->v8o_flags & V8_CONSTANT_OPTIONAL;
 		offset_removed = offp->v8o_flags & V8_CONSTANT_REMOVED;
 		offset_added = offp->v8o_flags & V8_CONSTANT_ADDED;
-		v8_older = v8_version_older(v8_major, v8_minor, cnp->v8c_flags);
+		v8_older = v8_version_older(v8_major,
+		    v8_minor, offp->v8o_flags);
 		v8_at_least = v8_version_at_least(v8_major,
 		    v8_minor, offp->v8o_flags);
 
@@ -766,6 +789,21 @@ again:
 			    offp->v8o_class, offp->v8o_member);
 			failed++;
 		}
+
+		offset_fallback = offp->v8o_flags & V8_CONSTANT_HASFALLBACK;
+		if (!offset_fallback ||
+		    v8_major < V8_CONSTANT_MAJOR(offp->v8o_flags) ||
+		    (v8_major == V8_CONSTANT_MAJOR(offp->v8o_flags) &&
+		    v8_minor < V8_CONSTANT_MINOR(offp->v8o_flags))) {
+			*offp->v8o_valp = -1;
+			continue;
+		}
+
+		/*
+		 * We have a fallback -- and we know that the version satisfies
+		 * the fallback's version constraints; use the fallback value.
+		 */
+		*offp->v8o_valp = offp->v8o_fallback;
 	}
 
 	if (!((V8_OFF_SEQASCIISTR_CHARS != -1) ^
@@ -826,6 +864,18 @@ again:
 			V8_SCOPEINFO_IDX_FIRST_VARS = 4;
 		}
 	}
+
+	/*
+	 * With V8 version 4.3, a new "constructor_or_backpointer" field
+	 * replaces the original "constructor" field. Both of them can't
+	 * exist at the same time, and the data they point have similar
+	 * semantics (at least similar enough so that the current code can
+	 * handle either of them transparently). So if the new field exists,
+	 * copy its value into the variable used to hold the old field to
+	 * allow the code to be more concise.
+	 */
+	if (V8_OFF_MAP_CONSTRUCTOR_OR_BACKPOINTER != -1)
+		V8_OFF_MAP_CONSTRUCTOR = V8_OFF_MAP_CONSTRUCTOR_OR_BACKPOINTER;
 
 	return (failed ? -1 : 0);
 }
@@ -976,6 +1026,8 @@ conf_update_field(v8_cfg_t *cfgp, const char *symbol)
 	intptr_t offset;
 	char *pp, *qq, *tt;
 	char buf[128];
+	int is_map_bitfield3_smi = 0;
+	int is_v8_bitfield3_actually_int = 0;
 
 	(void) strlcpy(buf, symbol, sizeof (buf));
 
@@ -994,11 +1046,28 @@ conf_update_field(v8_cfg_t *cfgp, const char *symbol)
 	    (flp = conf_field_create(clp, qq, (size_t)offset)) == NULL)
 		return (-1);
 
-	if (strcmp(tt, "int") == 0)
-		flp->v8f_isbyte = B_TRUE;
+	is_map_bitfield3_smi = strcmp(pp, "Map") == 0 &&
+	    strcmp(qq, "bit_field3") == 0 && strcmp(tt, "SMI") == 0;
 
-	if (strcmp(tt, "char") == 0)
+	/*
+	 * V8 versions between 3.28 and 4.7 were released without the proper
+	 * post-mortem metadata for Map's bit_field3 type, so we hardcode its
+	 * actual type when V8's version is between the version that introduced
+	 * the change from SMI to int and the version where the proper metadata
+	 * was added (4.7 inclusive, since several V8 4.7 versions exist and
+	 * some of them have the proper metadata, some of them don't).
+	 */
+	if (is_map_bitfield3_smi)
+		is_v8_bitfield3_actually_int =
+		    (v8_major == 3 && v8_minor >= 28) ||
+		    (v8_major == 4 && v8_minor <= 7);
+
+	if (strcmp(tt, "int") == 0 ||
+	    (is_map_bitfield3_smi && is_v8_bitfield3_actually_int)) {
+		flp->v8f_isbyte = B_TRUE;
+	} else if (strcmp(tt, "char") == 0) {
 		flp->v8f_isstr = B_TRUE;
+	}
 
 	return (0);
 }
@@ -1516,6 +1585,49 @@ out:
 }
 
 /*
+ * Given a JavaScript object's Map "map", stores the object's constructor
+ * in valp. Returns 0 if it succeeded, -1 otherwise.
+ */
+static int
+get_map_constructor(uintptr_t *valp, uintptr_t map) {
+	uintptr_t constructor_candidate;
+	int constructor_found = 0;
+	uint8_t type;
+
+	if (V8_OFF_MAP_CONSTRUCTOR == -1)
+		return (-1);
+
+	/*
+	 * https://codereview.chromium.org/950283002, which landed in V8 4.3.x,
+	 * makes the "constructor" and "backpointer to transitions" field
+	 * overlap. In order to retrieve the constructor from a Map, we follow
+	 * the chain of "constructor_or_backpointer" pointers until we find an
+	 * object that is _not_ a Map. This is the same algorithm as
+	 * Map::GetConstructor in src/objects-inl.h.
+	 */
+	while (constructor_found == 0) {
+		if (read_heap_ptr(&constructor_candidate,
+		    map, V8_OFF_MAP_CONSTRUCTOR) != 0)
+			return (-1);
+
+		if (read_typebyte(&type, constructor_candidate) != 0)
+			return (-1);
+
+		if (type != V8_TYPE_MAP) {
+			constructor_found = 1;
+			*valp = constructor_candidate;
+		}
+
+		map = constructor_candidate;
+	}
+
+	if (constructor_found == 1)
+		return (0);
+
+	return (-1);
+}
+
+/*
  * Given an object, returns in "buf" the name of the constructor function.  With
  * "verbose", prints the pointer to the JSFunction object.  Given anything else,
  * returns an error (and warns the user why).
@@ -1529,14 +1641,15 @@ obj_jsconstructor(uintptr_t addr, char **bufp, size_t *lenp, boolean_t verbose)
 
 	if (!V8_IS_HEAPOBJECT(addr) ||
 	    read_typebyte(&type, addr) != 0 ||
-	    (type != V8_TYPE_JSOBJECT && type != V8_TYPE_JSARRAY)) {
+	    (type != V8_TYPE_JSOBJECT &&
+	    type != V8_TYPE_JSARRAY &&
+	    type != V8_TYPE_JSTYPEDARRAY)) {
 		mdb_warn("%p is not a JSObject\n", addr);
 		return (-1);
 	}
 
 	if (mdb_vread(&map, sizeof (map), addr + V8_OFF_HEAPOBJECT_MAP) == -1 ||
-	    mdb_vread(&consfunc, sizeof (consfunc),
-	    map + V8_OFF_MAP_CONSTRUCTOR) == -1) {
+	    get_map_constructor(&consfunc, map) == -1) {
 		mdb_warn("unable to read object map\n");
 		return (-1);
 	}
@@ -1616,8 +1729,7 @@ obj_jstype(uintptr_t addr, char **bufp, size_t *lenp, uint8_t *typep)
 
 	if (strcmp(typename, "JSObject") == 0 &&
 	    mdb_vread(&map, sizeof (map), addr + V8_OFF_HEAPOBJECT_MAP) != -1 &&
-	    mdb_vread(&consfunc, sizeof (consfunc),
-	    map + V8_OFF_MAP_CONSTRUCTOR) != -1 &&
+	    get_map_constructor(&consfunc, map) != -1 &&
 	    read_typebyte(&typebyte, consfunc) == 0 &&
 	    strcmp(enum_lookup_str(v8_types, typebyte, ""),
 	    "JSFunction") == 0 &&
@@ -2196,7 +2308,8 @@ jsobj_maybe_garbage(uintptr_t addr)
 	    type != V8_TYPE_JSARRAY &&
 	    type != V8_TYPE_JSFUNCTION &&
 	    type != V8_TYPE_JSDATE &&
-	    type != V8_TYPE_JSREGEXP)));
+	    type != V8_TYPE_JSREGEXP &&
+	    type != V8_TYPE_JSTYPEDARRAY)));
 }
 
 /*
@@ -2362,8 +2475,12 @@ jsobj_properties(uintptr_t addr,
 	 * so, it contains numerically-named properties.  Whether or not there
 	 * are any numerically-named properties, there may be other kinds of
 	 * properties.
+	 * Do not consider instances of JSTypedArray, as they use the elements
+	 * member to store their external data, not numerically-named
+	 * properties.
 	 */
 	if (V8_ELEMENTS_KIND_SHIFT != -1 &&
+	    type != V8_TYPE_JSTYPEDARRAY &&
 	    read_heap_ptr(&elements, addr, V8_OFF_JSOBJECT_ELEMENTS) == 0 &&
 	    read_heap_array(elements, &elts, &len, UM_SLEEP) == 0 && len != 0) {
 		uint8_t bit_field2, kind;
@@ -3020,6 +3137,7 @@ jsobj_print(uintptr_t addr, jsobj_print_t *jsop)
 		{ "Oddball", jsobj_print_oddball },
 		{ "JSObject", jsobj_print_jsobject },
 		{ "JSArray", jsobj_print_jsarray },
+		{ "JSTypedArray", jsobj_print_jstyped_array },
 		{ "JSFunction", jsobj_print_jsfunction },
 		{ "JSDate", jsobj_print_jsdate },
 		{ "JSRegExp", jsobj_print_jsregexp },
@@ -3357,6 +3475,26 @@ jsobj_print_jsarray(uintptr_t addr, jsobj_print_t *jsop)
 
 	(void) bsnprintf(bufp, lenp, "%*s", indent, "");
 	(void) bsnprintf(bufp, lenp, "]");
+
+	return (0);
+}
+
+static int
+jsobj_print_jstyped_array(uintptr_t addr, jsobj_print_t *jsop)
+{
+	char **bufp = jsop->jsop_bufp;
+	size_t *lenp = jsop->jsop_lenp;
+	uintptr_t length;
+
+	if (V8_OFF_JSTYPEDARRAY_LENGTH == -1 ||
+	    read_heap_smi(&length, addr, V8_OFF_JSTYPEDARRAY_LENGTH) != 0) {
+		(void) bsnprintf(bufp, lenp,
+		    "<array (failed to read jstypedarray length)>");
+		return (-1);
+	}
+
+	(void) bsnprintf(bufp, lenp, "<Typed array of length ");
+	(void) bsnprintf(bufp, lenp, "%d>", (int)length);
 
 	return (0);
 }
@@ -4456,7 +4594,7 @@ findjsobjects_constructor(findjsobjects_obj_t *obj)
 	v8_silent++;
 
 	if (read_heap_ptr(&map, addr, V8_OFF_HEAPOBJECT_MAP) != 0 ||
-	    read_heap_ptr(&addr, map, V8_OFF_MAP_CONSTRUCTOR) != 0)
+	    get_map_constructor(&addr, map) != 0)
 		goto out;
 
 	if (read_typebyte(&type, addr) != 0)
@@ -4546,6 +4684,7 @@ findjsobjects_range(findjsobjects_state_t *fjs, uintptr_t addr, uintptr_t size)
 	findjsobjects_stats_t *stats = &fjs->fjs_stats;
 	uint8_t type;
 	int jsobject = V8_TYPE_JSOBJECT, jsarray = V8_TYPE_JSARRAY;
+	int jstypedarray = V8_TYPE_JSTYPEDARRAY;
 	int jsfunction = V8_TYPE_JSFUNCTION;
 	caddr_t range = mdb_alloc(size, UM_SLEEP);
 	uintptr_t base = addr, mapaddr;
@@ -4590,14 +4729,14 @@ findjsobjects_range(findjsobjects_state_t *fjs, uintptr_t addr, uintptr_t size)
 			continue;
 		}
 
-		if (type != jsobject && type != jsarray)
+		if (type != jsobject && type != jsarray && type != jstypedarray)
 			continue;
 
 		stats->fjss_jsobjs++;
 
 		fjs->fjs_current = findjsobjects_alloc(addr);
 
-		if (type == jsobject) {
+		if (type == jsobject || type == jstypedarray) {
 			if (jsobj_properties(addr,
 			    findjsobjects_prop, fjs,
 			    &fjs->fjs_current->fjso_propinfo) != 0) {
@@ -5294,12 +5433,23 @@ dcmd_nodebuffer(uintptr_t addr, uint_t flags, int argc,
 		if (obj_jsconstructor(addr, &bufp, &len, B_FALSE) != 0)
 			return (DCMD_ERR);
 
-		if (strcmp(buf, "Buffer") != 0) {
+		if (strcmp(buf, "Buffer") != 0 &&
+		    strcmp(buf, "Uint8Array") != 0) {
 			mdb_warn("%p does not appear to be a buffer\n", addr);
 			return (DCMD_ERR);
 		}
 	}
 
+	/*
+	 * This works for Buffer instance in node < 4.0 because they use
+	 * elements slots to reference the backing storage. It also works
+	 * with Buffer in node >= 4.0 because they actually are typed arrays
+	 * and typed arrays use elements slots to store the external data.
+	 * We could use the "backing_store" member of the JSArrayBuffer
+	 * associated to a typed array instead, but using elements for
+	 * both "old" Buffer instances and new ones has the benefit of
+	 * being able to reuse more code.
+	 */
 	if (read_heap_ptr(&elts, addr, V8_OFF_JSOBJECT_ELEMENTS) != 0)
 		return (DCMD_ERR);
 
