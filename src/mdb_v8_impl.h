@@ -62,6 +62,7 @@ extern intptr_t V8_SCOPEINFO_IDX_FIRST_VARS;
 extern intptr_t V8_SCOPEINFO_IDX_NCONTEXTLOCALS;
 extern intptr_t V8_SCOPEINFO_IDX_NPARAMS;
 extern intptr_t V8_SCOPEINFO_IDX_NSTACKLOCALS;
+extern intptr_t V8_SCOPEINFO_OFFSET_STACK_LOCALS;
 
 extern intptr_t V8_HeapObjectTag;
 extern intptr_t V8_HeapObjectTagMask;

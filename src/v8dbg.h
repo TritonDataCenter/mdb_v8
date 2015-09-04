@@ -49,7 +49,10 @@
 #define	V8_TYPE_STRING(type)	(((type) & V8_IsNotStringMask) == V8_StringTag)
 
 #define	V8_STRENC_ASCII(type)	\
-	(((type) & V8_StringEncodingMask) == V8_AsciiStringTag)
+	((V8_AsciiStringTag != -1 && \
+		((type) & V8_StringEncodingMask) == V8_AsciiStringTag) || \
+	(V8_OneByteStringTag != -1 && \
+		((type) & V8_StringEncodingMask) == V8_OneByteStringTag))
 
 #define	V8_STRREP_SEQ(type)	\
 	(((type) & V8_StringRepresentationMask) == V8_SeqStringTag)
@@ -72,6 +75,6 @@
 	((V8_SMI_VALUE(x) & V8_PROP_TYPE_MASK) == V8_PROP_TYPE_FIELD)
 
 #define	V8_PROP_FIELDINDEX(value)	\
-	((V8_SMI_VALUE(value) & V8_FIELDINDEX_MASK) >> V8_FIELDINDEX_SHIFT)
+	((V8_SMI_VALUE(value) & V8_PROPINDEX_MASK) >> V8_PROPINDEX_SHIFT)
 
 #endif /* _V8DBG_H */

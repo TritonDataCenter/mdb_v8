@@ -65,7 +65,7 @@ gcore.on('exit', function (code) {
 
 	var mdb = spawn('mdb', args, { stdio: 'pipe' });
 
-	mdb.on('exit', function (code2) {
+	mdb.stdin.on('end', function (code2) {
 		unlinkSync(tmpfile);
 		var retained = '; core retained as ' + corefile;
 

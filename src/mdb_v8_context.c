@@ -67,12 +67,13 @@ typedef struct {
 	v8scopeinfo_vartype_t	v8vti_vartype;
 	const char		*v8vti_label;
 	intptr_t		*v8vti_idx_countp;
+	intptr_t		*v8vti_offset;
 } v8scopeinfo_vartype_info_t;
 
 static v8scopeinfo_vartype_info_t v8scopeinfo_vartypes[] = {
 	{ V8SV_PARAMS, "parameter", &V8_SCOPEINFO_IDX_NPARAMS },
 	{ V8SV_STACKLOCALS, "stack local variable",
-	    &V8_SCOPEINFO_IDX_NSTACKLOCALS },
+	    &V8_SCOPEINFO_IDX_NSTACKLOCALS, &V8_SCOPEINFO_OFFSET_STACK_LOCALS },
 	{ V8SV_CONTEXTLOCALS, "context local variable",
 	    &V8_SCOPEINFO_IDX_NCONTEXTLOCALS },
 };
@@ -385,13 +386,47 @@ v8scopeinfo_iter_vars(v8scopeinfo_t *sip,
 	assert(vtip != NULL);
 	nvars = v8scopeinfo_vartype_nvars(sip, scopevartype);
 
+	/*
+	 * Skip to the start of the ScopeInfo's dynamic part. See mdb_v8_db.h
+	 * for more details on the layout of ScopeInfo objects.
+	 */
 	nskip = V8_SCOPEINFO_IDX_FIRST_VARS;
+
+	/*
+	 * Iterate over variable types so that we can add the offset from the
+	 * beginning of the actual data (the dynamic part) to the region of the
+	 * dynamic part that is specific to the variable type we're interested
+	 * in.
+	 */
 	for (i = 0; i < v8scopeinfo_nvartypes; i++) {
 		ogrp = &v8scopeinfo_vartypes[i];
-		if (*(ogrp->v8vti_idx_countp) >= *(vtip->v8vti_idx_countp)) {
-			continue;
+
+		/*
+		 * In the variable/dynamic part of a ScopeInfo layout, some
+		 * variable types have static metadata, e.g stack local entries
+		 * have a StackLocalFirstSlot, before the actual data. Add that
+		 * offset for each variable type, including for the one we're
+		 * interested in.
+		 */
+		if (v8scopeinfo_vartypes[i].v8vti_offset != NULL &&
+		    *(v8scopeinfo_vartypes[i].v8vti_offset) != -1) {
+			nskip += *(v8scopeinfo_vartypes[i].v8vti_offset);
 		}
 
+		/*
+		 * If the current variable type is the one we're interested in,
+		 * do not add anything to the offset. We're done.
+		 */
+		if (*(ogrp->v8vti_idx_countp) == *(vtip->v8vti_idx_countp)) {
+			break;
+		}
+
+		/*
+		 * The data for the current variable type is before the one
+		 * we're interested in in the variable part of the ScopeInfo
+		 * layout. Add the number of entries for this variable type to
+		 * the offset.
+		 */
 		nskip += v8scopeinfo_vartype_nvars(sip, ogrp->v8vti_vartype);
 	}
 

@@ -110,6 +110,7 @@ intptr_t V8_NotStringTag;
 intptr_t V8_StringEncodingMask;
 intptr_t V8_TwoByteStringTag;
 intptr_t V8_AsciiStringTag;
+intptr_t V8_OneByteStringTag;
 intptr_t V8_StringRepresentationMask;
 intptr_t V8_SeqStringTag;
 intptr_t V8_ConsStringTag;
@@ -130,8 +131,8 @@ static intptr_t	V8_DICT_SHIFT;
 static intptr_t	V8_DICT_PREFIX_SIZE;
 static intptr_t	V8_DICT_ENTRY_SIZE;
 static intptr_t	V8_DICT_START_INDEX;
-static intptr_t	V8_FIELDINDEX_MASK;
-static intptr_t	V8_FIELDINDEX_SHIFT;
+static intptr_t	V8_PROPINDEX_MASK;
+static intptr_t	V8_PROPINDEX_SHIFT;
 static intptr_t	V8_PROP_IDX_CONTENT;
 static intptr_t	V8_PROP_IDX_FIRST;
 static intptr_t	V8_PROP_TYPE_FIELD;
@@ -168,6 +169,7 @@ intptr_t V8_CONTEXT_IDX_GLOBAL;
 
 intptr_t V8_SCOPEINFO_IDX_NPARAMS;
 intptr_t V8_SCOPEINFO_IDX_NSTACKLOCALS;
+intptr_t V8_SCOPEINFO_OFFSET_STACK_LOCALS;
 intptr_t V8_SCOPEINFO_IDX_NCONTEXTLOCALS;
 intptr_t V8_SCOPEINFO_IDX_FIRST_VARS;
 
@@ -225,13 +227,14 @@ ssize_t V8_OFF_STRING_LENGTH;
 #define	V8_CONSTANT_OPTIONAL		1
 #define	V8_CONSTANT_HASFALLBACK		2
 #define	V8_CONSTANT_REMOVED		4
+#define	V8_CONSTANT_ADDED		8
 
-#define	V8_CONSTANT_MAJORSHIFT		3
+#define	V8_CONSTANT_MAJORSHIFT		4
 #define	V8_CONSTANT_MAJORMASK		((1 << 4) - 1)
 #define	V8_CONSTANT_MAJOR(flags)	\
 	(((flags) >> V8_CONSTANT_MAJORSHIFT) & V8_CONSTANT_MAJORMASK)
 
-#define	V8_CONSTANT_MINORSHIFT		7
+#define	V8_CONSTANT_MINORSHIFT		8
 #define	V8_CONSTANT_MINORMASK		((1 << 9) - 1)
 #define	V8_CONSTANT_MINOR(flags)	\
 	(((flags) >> V8_CONSTANT_MINORSHIFT) & V8_CONSTANT_MINORMASK)
@@ -242,6 +245,10 @@ ssize_t V8_OFF_STRING_LENGTH;
 
 #define	V8_CONSTANT_REMOVED_SINCE(maj, min) \
 	(V8_CONSTANT_REMOVED | \
+	((maj) << V8_CONSTANT_MAJORSHIFT) | ((min) << V8_CONSTANT_MINORSHIFT))
+
+#define	V8_CONSTANT_ADDED_SINCE(maj, min)	\
+	(V8_CONSTANT_ADDED | \
 	((maj) << V8_CONSTANT_MAJORSHIFT) | ((min) << V8_CONSTANT_MINORSHIFT))
 
 /*
@@ -266,7 +273,10 @@ static v8_constant_t v8_constants[] = {
 	{ &V8_NotStringTag,		"v8dbg_NotStringTag"		},
 	{ &V8_StringEncodingMask,	"v8dbg_StringEncodingMask"	},
 	{ &V8_TwoByteStringTag,		"v8dbg_TwoByteStringTag"	},
-	{ &V8_AsciiStringTag,		"v8dbg_AsciiStringTag"		},
+	{ &V8_AsciiStringTag,		"v8dbg_AsciiStringTag",
+	    V8_CONSTANT_REMOVED_SINCE(3, 29) },
+	{ &V8_OneByteStringTag,		"v8dbg_OneByteStringTag",
+	    V8_CONSTANT_ADDED_SINCE(3, 29) },
 	{ &V8_StringRepresentationMask,	"v8dbg_StringRepresentationMask" },
 	{ &V8_SeqStringTag,		"v8dbg_SeqStringTag"		},
 	{ &V8_ConsStringTag,		"v8dbg_ConsStringTag"		},
@@ -298,9 +308,9 @@ static v8_constant_t v8_constants[] = {
 	    V8_CONSTANT_FALLBACK(3, 11), 3 },
 	{ &V8_DICT_START_INDEX,		"v8dbg_dict_start_index",
 	    V8_CONSTANT_FALLBACK(3, 11), 3 },
-	{ &V8_FIELDINDEX_MASK,		"v8dbg_fieldindex_mask",
+	{ &V8_PROPINDEX_MASK,		"v8dbg_propindex_mask",
 	    V8_CONSTANT_FALLBACK(3, 26), 0x3ff00000 },
-	{ &V8_FIELDINDEX_SHIFT,		"v8dbg_fieldindex_shift",
+	{ &V8_PROPINDEX_SHIFT,		"v8dbg_propindex_shift",
 	    V8_CONSTANT_FALLBACK(3, 26), 20 },
 	{ &V8_ISSHARED_SHIFT,		"v8dbg_isshared_shift",
 	    V8_CONSTANT_FALLBACK(3, 11), 0 },
@@ -346,14 +356,17 @@ static v8_constant_t v8_constants[] = {
 	    V8_CONSTANT_FALLBACK(0, 0), 3 },
 
 	{ &V8_SCOPEINFO_IDX_NPARAMS, "v8dbg_scopeinfo_idx_nparams",
-	    V8_CONSTANT_FALLBACK(0, 0), 1 },
+	    V8_CONSTANT_FALLBACK(3, 7), 1 },
 	{ &V8_SCOPEINFO_IDX_NSTACKLOCALS, "v8dbg_scopeinfo_idx_nstacklocals",
-	    V8_CONSTANT_FALLBACK(0, 0), 2 },
+	    V8_CONSTANT_FALLBACK(3, 7), 2 },
+	{ &V8_SCOPEINFO_OFFSET_STACK_LOCALS,
+		"v8dbg_scopeinfo_offset_stack_locals",
+	    V8_CONSTANT_FALLBACK(4, 4), 1 },
 	{ &V8_SCOPEINFO_IDX_NCONTEXTLOCALS,
 	    "v8dbg_scopeinfo_idx_ncontextlocals",
-	    V8_CONSTANT_FALLBACK(0, 0), 3 },
+	    V8_CONSTANT_FALLBACK(3, 7), 3 },
 	{ &V8_SCOPEINFO_IDX_FIRST_VARS, "v8dbg_scopeinfo_idx_first_vars",
-	    V8_CONSTANT_FALLBACK(0, 0), 4 },
+	    V8_CONSTANT_FALLBACK(4, 5), 6 },
 };
 
 static int v8_nconstants = sizeof (v8_constants) / sizeof (v8_constants[0]);
@@ -363,6 +376,7 @@ typedef struct v8_offset {
 	const char	*v8o_class;
 	const char	*v8o_member;
 	boolean_t	v8o_optional;
+	uint32_t	v8o_flags;
 } v8_offset_t;
 
 static v8_offset_t v8_offsets[] = {
@@ -399,7 +413,11 @@ static v8_offset_t v8_offsets[] = {
 	{ &V8_OFF_JSREGEXP_DATA,
 	    "JSRegExp", "data", B_TRUE },
 	{ &V8_OFF_MAP_CONSTRUCTOR,
-	    "Map", "constructor" },
+	    "Map", "constructor",
+	    B_FALSE, V8_CONSTANT_REMOVED_SINCE(4, 3)},
+	{ &V8_OFF_MAP_CONSTRUCTOR,
+	    "Map", "constructor_or_backpointer",
+	    B_FALSE, V8_CONSTANT_ADDED_SINCE(4, 3)},
 	{ &V8_OFF_MAP_INOBJECT_PROPERTIES,
 	    "Map", "inobject_properties" },
 	{ &V8_OFF_MAP_INSTANCE_ATTRIBUTES,
@@ -540,6 +558,18 @@ v8_version_older(uintptr_t v8_major, uintptr_t v8_minor, uint32_t flags) {
 }
 
 /*
+ * Returns 1 if the V8 version v8_major.v8.minor is newer or equal than
+ * the V8 version represented by "flags".
+ * Returns 0 otherwise.
+ */
+static int
+v8_version_at_least(uintptr_t v8_major, uintptr_t v8_minor, uint32_t flags) {
+	return (v8_major > V8_CONSTANT_MAJOR(flags) ||
+	    (v8_major == V8_CONSTANT_MAJOR(flags) &&
+	    v8_minor >= V8_CONSTANT_MINOR(flags)));
+}
+
+/*
  * Invoked when this dmod is initially loaded to load the set of classes, enums,
  * and other constants from the metadata in the target binary.
  */
@@ -551,6 +581,9 @@ autoconfigure(v8_cfg_t *cfgp)
 	struct v8_constant *cnp;
 	int ii;
 	int failed = 0;
+	int constant_optional, constant_removed, constant_added;
+	int offset_optional, offset_removed, offset_added;
+	int v8_older, v8_at_least;
 
 	assert(v8_classes == NULL);
 
@@ -585,9 +618,16 @@ autoconfigure(v8_cfg_t *cfgp)
 			continue;
 		}
 
-		if (!(cnp->v8c_flags & V8_CONSTANT_OPTIONAL) &&
-		    (!(cnp->v8c_flags & V8_CONSTANT_REMOVED) ||
-		    v8_version_older(v8_major, v8_minor, cnp->v8c_flags))) {
+		constant_optional = cnp->v8c_flags & V8_CONSTANT_OPTIONAL;
+		constant_removed = cnp->v8c_flags & V8_CONSTANT_REMOVED;
+		constant_added = cnp->v8c_flags & V8_CONSTANT_ADDED;
+		v8_older = v8_version_older(v8_major, v8_minor, cnp->v8c_flags);
+		v8_at_least = v8_version_at_least(v8_major,
+		    v8_minor, cnp->v8c_flags);
+
+		if (!constant_optional &&
+		    (!constant_removed || v8_older) &&
+		    (!constant_added || v8_at_least)) {
 			mdb_warn("failed to read \"%s\"", cnp->v8c_symbol);
 			failed++;
 			continue;
@@ -712,9 +752,20 @@ again:
 			continue;
 		}
 
-		mdb_warn("couldn't find class \"%s\", field \"%s\"\n",
-		    offp->v8o_class, offp->v8o_member);
-		failed++;
+		offset_optional = offp->v8o_flags & V8_CONSTANT_OPTIONAL;
+		offset_removed = offp->v8o_flags & V8_CONSTANT_REMOVED;
+		offset_added = offp->v8o_flags & V8_CONSTANT_ADDED;
+		v8_older = v8_version_older(v8_major, v8_minor, cnp->v8c_flags);
+		v8_at_least = v8_version_at_least(v8_major,
+		    v8_minor, offp->v8o_flags);
+
+		if (!offset_optional &&
+		    (!offset_removed || v8_older) &&
+		    (!offset_added || v8_at_least)) {
+			mdb_warn("couldn't find class \"%s\", field \"%s\"\n",
+			    offp->v8o_class, offp->v8o_member);
+			failed++;
+		}
 	}
 
 	if (!((V8_OFF_SEQASCIISTR_CHARS != -1) ^
@@ -757,6 +808,24 @@ again:
 
 	if (V8_OFF_MAP_BIT_FIELD2 == -1)
 		V8_OFF_MAP_BIT_FIELD2 = V8_OFF_MAP_INSTANCE_ATTRIBUTES + 3;
+
+	/*
+	 * V8_SCOPEINFO_IDX_FIRST_VARS' value was 4 in V8 3.7 and up,
+	 * then 5 when StrongModeFreeVariableCount was added with
+	 * https://codereview.chromium.org/1005063002, and 6 when
+	 * ContextGlobalCount was added with
+	 * https://codereview.chromium.org/1218783005.
+	 * Since the current V8_CONSTANT_FALLBACK macro doesn't allow
+	 * us to specify different values for different V8 versions,
+	 * these are hardcoded below.
+	 */
+	if (V8_SCOPEINFO_IDX_FIRST_VARS == -1) {
+		if (v8_major > 4 || (v8_major == 4 && v8_minor >= 3)) {
+			V8_SCOPEINFO_IDX_FIRST_VARS = 5;
+		} else if (v8_major > 3 || (v8_major == 3 && v8_minor >= 7)) {
+			V8_SCOPEINFO_IDX_FIRST_VARS = 4;
+		}
+	}
 
 	return (failed ? -1 : 0);
 }
