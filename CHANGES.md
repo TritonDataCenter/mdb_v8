@@ -12,10 +12,12 @@
 
 ## Unreleased changes
 
-* #23 support V8 4.4.x and 4.5.x
+None.
+
+## v1.0.0 (2015-09-09)
 
 * #25 fix ia32 build
-
+* #23 support V8 4.4.x and 4.5.x
 * #20 want ::jsfunctions -l
 
 ## v0.11.1 (2015-08-20)
