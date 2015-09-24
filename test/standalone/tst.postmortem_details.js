@@ -14,8 +14,16 @@ var os = require('os');
 var path = require('path');
 var util = require('util');
 
-var NODE_MAJOR = Number(process.versions.node.split('.')[0]);
+var NODE_VERSIONS = process.versions.node.split('.');
+var NODE_MAJOR = Number(NODE_VERSIONS[0]);
 assert.equal(isNaN(NODE_MAJOR), false);
+
+var V8_VERSIONS = process.versions.v8.split('.');
+var V8_MAJOR = Number(V8_VERSIONS[0]);
+assert.equal(isNaN(V8_MAJOR), false);
+
+var V8_MINOR = Number(V8_VERSIONS[1]);
+assert.equal(isNaN(V8_MINOR), false);
 
 /*
  * We're going to look specifically for this function and buffer in the core
@@ -135,9 +143,17 @@ gcore.on('exit', function (code) {
 		assert.equal(testlines.length, 1);
 		assert.equal(testlines[0], '0x' + buffer + ':      Hello');
 	});
-	verifiers.push(function verifyV8internal(testlines) {
-		assert.deepEqual(testlines, [ buffer ]);
-	});
+	// Buffer instances are implemented as typed arrays in Node
+	// versions that ship with V8 >= 4.6. Typed arrays in these versions
+	// of V8 do not *directly* store their underlying buffer as an
+	// "internal" element, so ::v8internal would not output its address.
+	// It would instead output the address of a FixedTypedArrayBase
+	// instance. Thus, skip the test.
+	if (V8_MAJOR < 4 || V8_MAJOR === 4 && V8_MINOR < 6) {
+		verifiers.push(function verifyV8internal(testlines) {
+			assert.deepEqual(testlines, [ buffer ]);
+		});
+	}
 	verifiers.push(function verifyJsfunctionN(testlines) {
 		assert.equal(testlines.length, 2);
 		var parts = testlines[1].trim().split(/\s+/);
@@ -212,12 +228,19 @@ gcore.on('exit', function (code) {
 	mdb.stdin.write('::cat ' + tmpfile +
 	    ' | ::nodebuffer | ::eval "./ccccc"\n');
 
-	mdb.stdin.write('!echo test: v8internal\n');
-	mdb.stdin.write('::cat ' + tmpfile +
-	    ' | ::v8print ! awk \'$2 == "elements"{' +
-	    'print $4 }\' > ' + tmpfile + '\n');
-	mdb.stdin.write('::cat ' + tmpfile + ' | ::v8internal 0\n');
-
+	// Buffer instances are implemented as typed arrays in Node
+	// versions that ship with V8 >= 4.6. Typed arrays in these versions
+	// of V8 do not *directly* store their underlying buffer as an
+	// "internal" element, so ::v8internal would not output its address.
+	// It would instead output the address of a FixedTypedArrayBase
+	// instance. Thus, skip the test.
+	if (V8_MAJOR < 4 || V8_MAJOR === 4 && V8_MINOR < 6) {
+		mdb.stdin.write('!echo test: v8internal\n');
+		mdb.stdin.write('::cat ' + tmpfile +
+		    ' | ::v8print ! awk \'$2 == "elements"{' +
+		    'print $4 }\' > ' + tmpfile + '\n');
+		mdb.stdin.write('::cat ' + tmpfile + ' | ::v8internal 0\n');
+	}
 	mdb.stdin.write('!echo test: jsfunctions -n\n');
 	mdb.stdin.write('::jsfunctions -n myTestFunction ! cat\n');
 	mdb.stdin.write('!echo test: jsfunctions -s\n');

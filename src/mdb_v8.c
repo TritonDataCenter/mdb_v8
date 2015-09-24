@@ -198,6 +198,7 @@ ssize_t V8_OFF_JSOBJECT_PROPERTIES;
 ssize_t V8_OFF_MAP_CONSTRUCTOR;
 ssize_t V8_OFF_MAP_CONSTRUCTOR_OR_BACKPOINTER;
 ssize_t V8_OFF_MAP_INOBJECT_PROPERTIES;
+ssize_t V8_OFF_MAP_INOBJECT_PROPERTIES_OR_CTOR_FUN_INDEX;
 ssize_t V8_OFF_MAP_INSTANCE_ATTRIBUTES;
 ssize_t V8_OFF_MAP_INSTANCE_DESCRIPTORS;
 ssize_t V8_OFF_MAP_INSTANCE_SIZE;
@@ -224,6 +225,9 @@ ssize_t V8_OFF_SLICEDSTRING_PARENT;
 ssize_t V8_OFF_SLICEDSTRING_OFFSET;
 ssize_t V8_OFF_STRING_LENGTH;
 ssize_t V8_OFF_JSTYPEDARRAY_LENGTH;
+ssize_t V8_OFF_JSARRAYBUFFER_BACKINGSTORE;
+ssize_t V8_OFF_JSARRAYBUFFERVIEW_BUFFER;
+ssize_t V8_OFF_JSARRAYBUFFERVIEW_CONTENT_OFFSET;
 
 /* see node_string.h */
 #define	NODE_OFF_EXTSTR_DATA		sizeof (uintptr_t)
@@ -424,7 +428,17 @@ static v8_offset_t v8_offsets[] = {
 	    "Map", "constructor_or_backpointer",
 	    B_FALSE, V8_CONSTANT_ADDED_SINCE(4, 3)},
 	{ &V8_OFF_MAP_INOBJECT_PROPERTIES,
-	    "Map", "inobject_properties" },
+	    "Map", "inobject_properties",
+	    B_FALSE, V8_CONSTANT_REMOVED_SINCE(4, 6) },
+#ifdef _LP64
+	{ &V8_OFF_MAP_INOBJECT_PROPERTIES_OR_CTOR_FUN_INDEX,
+	    "Map", "inobject_properties_or_constructor_function_index",
+	    B_FALSE, V8_CONSTANT_FALLBACK(4, 6), 8 },
+#else
+	{ &V8_OFF_MAP_INOBJECT_PROPERTIES_OR_CTOR_FUN_INDEX,
+	    "Map", "inobject_properties_or_constructor_function_index",
+	    B_FALSE, V8_CONSTANT_FALLBACK(4, 6), 4 },
+#endif
 	{ &V8_OFF_MAP_INSTANCE_ATTRIBUTES,
 	    "Map", "instance_attributes" },
 	{ &V8_OFF_MAP_INSTANCE_DESCRIPTORS,
@@ -481,6 +495,26 @@ static v8_offset_t v8_offsets[] = {
 	{ &V8_OFF_JSTYPEDARRAY_LENGTH,
 	    "JSTypedArray", "length",
 	    B_FALSE, V8_CONSTANT_FALLBACK(4, 5), 27 },
+#endif
+#ifdef _LP64
+	{ &V8_OFF_JSARRAYBUFFER_BACKINGSTORE,
+	    "JSArrayBuffer", "backing_store",
+	    B_FALSE, V8_CONSTANT_FALLBACK(4, 6), 23 },
+#else
+	{ &V8_OFF_JSARRAYBUFFER_BACKINGSTORE,
+	    "JSArrayBuffer", "backing_store",
+	    B_FALSE, V8_CONSTANT_FALLBACK(4, 6), 11 },
+#endif
+	{ &V8_OFF_JSARRAYBUFFERVIEW_BUFFER,
+	    "JSArrayBufferView", "buffer" },
+#ifdef _LP64
+	{ &V8_OFF_JSARRAYBUFFERVIEW_CONTENT_OFFSET,
+	    "JSArrayBufferView", "byte_offset",
+	    B_FALSE, V8_CONSTANT_FALLBACK(4, 6), 31 },
+#else
+	{ &V8_OFF_JSARRAYBUFFERVIEW_CONTENT_OFFSET,
+	    "JSArrayBufferView", "byte_offset",
+	    B_FALSE, V8_CONSTANT_FALLBACK(4, 6), 15 },
 #endif
 };
 
@@ -876,6 +910,10 @@ again:
 	 */
 	if (V8_OFF_MAP_CONSTRUCTOR_OR_BACKPOINTER != -1)
 		V8_OFF_MAP_CONSTRUCTOR = V8_OFF_MAP_CONSTRUCTOR_OR_BACKPOINTER;
+
+	if (V8_OFF_MAP_INOBJECT_PROPERTIES_OR_CTOR_FUN_INDEX != -1)
+		V8_OFF_MAP_INOBJECT_PROPERTIES =
+		    V8_OFF_MAP_INOBJECT_PROPERTIES_OR_CTOR_FUN_INDEX;
 
 	return (failed ? -1 : 0);
 }
@@ -5420,6 +5458,8 @@ dcmd_nodebuffer(uintptr_t addr, uint_t flags, int argc,
 	char *bufp = buf;
 	size_t len = sizeof (buf);
 	uintptr_t elts, rawbuf;
+	uintptr_t arraybuffer_view_buffer;
+	uintptr_t arraybufferview_content_offset;
 
 	/*
 	 * The undocumented "-f" option allows users to override constructor
@@ -5440,21 +5480,63 @@ dcmd_nodebuffer(uintptr_t addr, uint_t flags, int argc,
 		}
 	}
 
-	/*
-	 * This works for Buffer instance in node < 4.0 because they use
-	 * elements slots to reference the backing storage. It also works
-	 * with Buffer in node >= 4.0 because they actually are typed arrays
-	 * and typed arrays use elements slots to store the external data.
-	 * We could use the "backing_store" member of the JSArrayBuffer
-	 * associated to a typed array instead, but using elements for
-	 * both "old" Buffer instances and new ones has the benefit of
-	 * being able to reuse more code.
-	 */
-	if (read_heap_ptr(&elts, addr, V8_OFF_JSOBJECT_ELEMENTS) != 0)
-		return (DCMD_ERR);
+	if (strcmp(buf, "Buffer") == 0 ||
+	    V8_OFF_JSARRAYBUFFER_BACKINGSTORE == -1) {
+		/*
+		 * This works for Buffer instances in node < 4.0 because they
+		 * use elements slots to reference the backing storage. If
+		 * the constructor name is not "Buffer" but "Uint8Array" and
+		 * V8_OFF_JSARRAYBUFFER_BACKINGSTORE == -1, it means we are in
+		 * the range of node versions >= 4.0 and <= 4.1 that ship with
+		 * V8 4.5.x. For these versions, it also works because Buffer
+		 * instances are actually typed arrays but their backing storage
+		 * an ExternalUint8Arrayelements whose address is stored in the
+		 * first element's slot.
+		 */
+		if (read_heap_ptr(&elts, addr, V8_OFF_JSOBJECT_ELEMENTS) != 0)
+			return (DCMD_ERR);
 
-	if (obj_v8internal(elts, 0, &rawbuf) != 0)
-		return (DCMD_ERR);
+		if (obj_v8internal(elts, 0, &rawbuf) != 0)
+			return (DCMD_ERR);
+	} else {
+		/*
+		 * The buffer instance's constructor name is Uint8Array, and
+		 * V8_OFF_JSARRAYBUFFER_BACKINGSTORE != -1, which means that
+		 * we're dealing with a node version that ships with V8 4.6 or
+		 * later. For these versions, buffer instances store their data
+		 * as a typed array, but this time instead of having the backing
+		 * store as an ExternalUint8Array referenced from an element
+		 * slot, it can be found at two different locations:
+		 *
+		 * 1. As a FixedTypedArray casted as a FixedTypedArrayBase in an
+		 * element slot.
+		 *
+		 * 2. As the "backing_store" property of the corresponding
+		 * JSArrayBuffer.
+		 *
+		 * The second way to retrieve the backing store seems like
+		 * it will be less likely to change, and is thus the one we're
+		 * using.
+		 */
+		if (V8_OFF_JSARRAYBUFFER_BACKINGSTORE == -1 ||
+		    V8_OFF_JSARRAYBUFFERVIEW_BUFFER == -1 ||
+		    V8_OFF_JSARRAYBUFFERVIEW_CONTENT_OFFSET == -1)
+			return (DCMD_ERR);
+
+		if (read_heap_ptr(&arraybuffer_view_buffer, addr,
+		    V8_OFF_JSARRAYBUFFERVIEW_BUFFER) != 0)
+			return (DCMD_ERR);
+
+		if (read_heap_ptr(&rawbuf, arraybuffer_view_buffer,
+		    V8_OFF_JSARRAYBUFFER_BACKINGSTORE) != 0)
+			return (DCMD_ERR);
+
+		if (read_heap_smi(&arraybufferview_content_offset, addr,
+		    V8_OFF_JSARRAYBUFFERVIEW_CONTENT_OFFSET) != 0)
+			return (DCMD_ERR);
+
+		rawbuf += arraybufferview_content_offset;
+	}
 
 	mdb_printf("%p\n", rawbuf);
 	return (DCMD_OK);
