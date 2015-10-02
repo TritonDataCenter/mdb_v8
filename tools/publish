@@ -135,7 +135,7 @@ function pub_sanity_check
 
 function pub_sanity_check_file
 {
-	local file tmpfile pid i tag
+	local file tmpfile pid i tag version
 
 	file="$1"
 	echo -n "Checking for $file ... "
@@ -172,6 +172,38 @@ function pub_sanity_check_file
 	if [[ "$tag" != "release" ]]; then
 		fail "does not appear to be a release build (tag "\"$tag\"")"
 	fi
+
+	#
+	# Newer illumos versions have a public libavl, but binaries that link
+	# against this libavl won't work on older platforms with a private
+	# libavl.  To avoid a run-time flag day for users, we must build release
+	# binaries on systems that predate the public libavl.  To do this, we
+	# bail out here if we find that the built binary is using the public
+	# libavl.  This is hopefully a short-term solution.  See issue #29 for
+	# details.
+	#
+	echo -n "Checking for dependency in $file on public libavl ... "
+	if ! pvs -N libavl.so.1 -o $file > $tmpfile; then
+		rm -f $tmpfile
+		fail "failed to extract version information using pvs(1)"
+	fi
+
+	version="$(awk '$3 == "libavl.so.1" { print $4 }' $tmpfile)"
+	rm -f $tmpfile
+	if [[ -z "$version" ]]; then
+		fail "did not find version information for libavl"
+	fi
+
+	if [[ $version =~ ILLUMOS ]]; then
+		fail "$file is linked against public libavl.  This platform" \
+		    "appears to be too new for building release binaries."
+	fi
+
+	if ! [[ $version =~ SUNWprivate ]]; then
+		fail "expected SUNWprivate, found $version"
+	fi
+
+	echo "done."
 }
 
 #
