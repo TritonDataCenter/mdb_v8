@@ -505,8 +505,15 @@ static v8_offset_t v8_offsets[] = {
 	    "JSArrayBuffer", "backing_store",
 	    B_FALSE, V8_CONSTANT_FALLBACK(4, 6), 11 },
 #endif
+#ifdef _LP64
 	{ &V8_OFF_JSARRAYBUFFERVIEW_BUFFER,
-	    "JSArrayBufferView", "buffer" },
+	    "JSArrayBufferView", "buffer",
+	    B_FALSE, V8_CONSTANT_FALLBACK(3, 20), 23 },
+#else
+	{ &V8_OFF_JSARRAYBUFFERVIEW_BUFFER,
+	    "JSArrayBufferView", "buffer",
+	    B_FALSE, V8_CONSTANT_FALLBACK(3, 20), 11 },
+#endif
 #ifdef _LP64
 	{ &V8_OFF_JSARRAYBUFFERVIEW_CONTENT_OFFSET,
 	    "JSArrayBufferView", "byte_offset",
