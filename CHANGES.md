@@ -14,6 +14,13 @@
 
 None.
 
+## v1.1.0 (2015-10-02)
+
+This version fixes support for Node v4.
+
+* #36: Update mdb\_v8 for V8 4.6.x
+* #32: fix ::findjsobjects for V8 4.5.x
+
 ## v1.0.0 (2015-09-09)
 
 * #25 fix ia32 build
