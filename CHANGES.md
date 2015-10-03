@@ -10,8 +10,9 @@
 
 # mdb_v8 changelog
 
-## Unreleased changes
+## v1.1.1 (2015-10-02)
 
+* #40: fix JSArrayBufferView's buffer offset missing
 * #28 don't allow release builds that won't work on older platforms
 
 ## v1.1.0 (2015-10-02)
