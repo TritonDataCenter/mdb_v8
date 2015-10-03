@@ -71,14 +71,14 @@ This document describes mdb\_v8, a debugger module for the [Modular Debugger
 
 mdb\_v8 is the only program (that we know of) that uses the debug information
 contained in Node binaries.  It also ships with metadata for Node 0.6 and 0.4,
-so it's capable of debugging core files from Node 0.4 through Node 0.12.
+so it's capable of debugging core files from Node 0.4 through Node 4.0.
 
 While MDB itself only runs on illumos, it's capable of understanding core files
 from GNU/Linux systems as well.
 
 In short, in order to use these tools, you'll want:
 
-* a core file from any Node program from version v0.4 through version v0.12,
+* a core file from any Node program from version v0.4 through version v4,
   created on either an illumos or GNU/Linux system
 * access to an illumos system on which to run mdb
 * a copy of mdb\_v8.so, the debugger module itself
