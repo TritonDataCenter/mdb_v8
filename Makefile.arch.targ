@@ -27,8 +27,18 @@ $(MDBV8_BUILD_$(MDBV8_ARCH))/%.o: src/%.c | $(MDBV8_BUILD_$(MDBV8_ARCH))
 $(MDBV8_BUILD_$(MDBV8_ARCH))/%.o: $(MDBV8_BUILD)/%.c | $(MDBV8_BUILD_$(MDBV8_ARCH))
 	$(COMPILE.c)
 
-$(MDBV8_DYLIB_$(MDBV8_ARCH)): $(MDBV8_OBJECTS_$(MDBV8_ARCH))
+$(MDBV8_DYLIB_$(MDBV8_ARCH)): $(MDBV8_OBJECTS_$(MDBV8_ARCH)) $(EXTRA_STATIC_LIBS_$(MDBV8_ARCH)) | $(LIBAVL_$(MDBV8_ARCH))
 	$(MAKESO)
 
 $(MDBV8_BUILD_$(MDBV8_ARCH)):
 	$(MKDIRP)
+
+#
+# Build our private, static libavl by descending into the submodule and running
+# its build system.  This target depends on the ".git" directory in the
+# submodule to trigger another recipe to checkout the submodule as needed.
+#
+$(LIBAVL_$(MDBV8_ARCH)): $(LIBAVL_SUBMODULE)/.git
+	BUILD_DIR=$$(pwd)/$(shell dirname $@) \
+	CFLAGS="-fPIC $(CFLAGS_ARCH)" \
+	    $(MAKE) -C $(LIBAVL_SUBMODULE)

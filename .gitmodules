@@ -1,0 +1,3 @@
+[submodule "deps/illumos-libavl"]
+	path = deps/illumos-libavl
+	url = git://github.com/joyent/illumos-libavl

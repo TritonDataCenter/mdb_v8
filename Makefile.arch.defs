@@ -33,3 +33,7 @@ MDBV8_TARGETS_$(MDBV8_ARCH)	:= \
 # Append this shared object to the list of "all" targets
 MDBV8_ALLTARGETS		:= \
     $(MDBV8_ALLTARGETS) $(MDBV8_DYLIB_$(MDBV8_ARCH))
+
+# Private copy of libavl
+LIBAVL_$(MDBV8_ARCH)		:= $(MDBV8_BUILD_$(MDBV8_ARCH))/libavl.a
+EXTRA_STATIC_LIBS_$(MDBV8_ARCH) += $(LIBAVL_$(MDBV8_ARCH))

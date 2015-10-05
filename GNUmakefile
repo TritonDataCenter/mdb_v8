@@ -59,9 +59,11 @@ CPPFLAGS		+= -DMDBV8_VERS_TAG='$(MDBV8_VERS_TAG)'
 CFLAGS			+= -Wno-unused-parameter		\
 			   -Wno-missing-field-initializers	\
 			   -Wno-sign-compare 
+# This is necessary for including avl_impl.h.
+CFLAGS			+= -Wno-unknown-pragmas
 
 # Linker flags (including dependent libraries)
-LDFLAGS			+= -lproc -lavl
+LDFLAGS			+= -lproc
 SOFLAGS			 = -Wl,-soname=$(MDBV8_SONAME)
 
 # Path to cstyle.pl tool
@@ -86,11 +88,16 @@ include Makefile.arch.defs
 MDBV8_ARCH = amd64
 include Makefile.arch.defs
 
+LIBAVL_SUBMODULE	 = deps/illumos-libavl
+CPPFLAGS		+= -I$(LIBAVL_SUBMODULE)/include
+
+$(LIBAVL_amd64):	CFLAGS_ARCH += -m64
 $(MDBV8_TARGETS_amd64):	CFLAGS	+= -m64
 $(MDBV8_TARGETS_amd64):	SOFLAGS	+= -m64
 
-$(MDBV8_TARGETS_ia32): CFLAGS += -m32
-$(MDBV8_TARGETS_ia32): SOFLAGS += -m32
+$(LIBAVL_ia32):		CFLAGS_ARCH += -m32
+$(MDBV8_TARGETS_ia32):	CFLAGS += -m32
+$(MDBV8_TARGETS_ia32):	SOFLAGS += -m32
 
 #
 # DEFINITIONS USED AS RECIPES
