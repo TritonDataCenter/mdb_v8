@@ -54,6 +54,10 @@ MDBV8_CSTYLE_SOURCES	 = $(wildcard src/*.c src/*.h)
 
 # Compiler flags
 CFLAGS			+= -Werror -Wall -Wextra -fPIC -fno-omit-frame-pointer
+# Including DWARF information allows us to debug the dmod using MDB's support
+# for runtime conversion of DWARF to CTF.
+CFLAGS			+= -g -O
+
 CPPFLAGS		+= -DMDBV8_VERS_TAG='$(MDBV8_VERS_TAG)'
 # XXX These should be removed.
 CFLAGS			+= -Wno-unused-parameter		\
