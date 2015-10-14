@@ -10,6 +10,10 @@
 
 # mdb_v8 changelog
 
+## Unreleased changes
+
+* #48 want tool for running tests on multiple Node versions
+
 ## v1.1.1 (2015-10-02)
 
 * #40: fix JSArrayBufferView's buffer offset missing

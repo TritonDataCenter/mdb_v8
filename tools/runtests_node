@@ -1,0 +1,204 @@
+#!/bin/bash
+
+#
+# runtests_node: runs the mdb_v8 test suite with several versions of Node.
+# See usage() for usage details.
+#
+
+set -o pipefail
+
+#
+# Static configuration: Node versions to setup and test.
+#
+rn_versions="0.10.40 0.12.7 4.0.0 4.1.2 4.2.1"
+rn_platform="sunos"
+rn_arches="x86 x64"
+rn_nodebase="https://nodejs.org/dist"
+
+#
+# Runtime configuration
+#
+rn_arg0="$(basename ${BASH_SOURCE[0]})"
+rn_srcroot="$(dirname ${BASH_SOURCE[0]})/.."
+rn_subcmd=
+rn_target_dir=
+rn_results=
+rn_nerrors=0
+
+#
+# usage MESSAGE...: emit MESSAGE to stderr and exit non-zero.
+#
+function usage
+{
+	echo "$rn_arg0: $@" >&2
+	cat <<EOF >&2
+usage: $rn_arg0 setup TARGET_DIR
+       $rn_arg0 run TARGET_DIR
+
+Runs the mdb_v8 test suite with several versions of Node.  There are two
+subcommands for this program:
+
+    setup    sets up directory TARGET_DIR with the configured Node versions
+             by downloading official builds
+
+    run      runs the test suite with the configured Node versions.  You should
+             have already run "setup" with TARGET_DIR first.
+
+EOF
+	exit 2
+}
+
+#
+# fail MESSAGE...: emit MESSAGE to stderr and exit 1
+#
+function fail
+{
+	echo "$rn_arg0: $@" >&2
+	exit 1
+}
+
+function main
+{
+	local func
+
+	if [[ $# -lt 2 ]]; then
+		usage "missing arguments"
+	elif [[ $# -gt 2 ]]; then
+		usage "extra arguments"
+	fi
+
+	cd "$rn_srcroot" || fail "failed to fetch source root"
+	rn_srcroot="$(pwd)"
+	cd - > /dev/null || fail "failed to fetch source root"
+
+	rn_subcmd="$1"
+	rn_target_dir="$2"
+	case "$rn_subcmd" in
+	setup|run)	do_$rn_subcmd ;;
+	*)		usage "unknown command: \"$rn_subcmd\"" ;;
+	esac
+}
+
+#
+# do_setup: downloads and unpacks all configured Node versions into the target
+# directory.
+#
+function do_setup
+{
+	if ! mkdir -p "$rn_target_dir"; then
+		fail "failed to create \"$rn_target_dir\""
+	fi
+
+	if ! cd "$rn_target_dir"; then
+		fail "failed to chdir \"$rn_target_dir\""
+	fi
+
+	for version in $rn_versions; do
+		for arch in $rn_arches; do
+			if ! do_setup_one \
+			    "$version" "$rn_platform" "$arch"; then
+				fail "failed to setup Node $version ($arch)"
+			fi
+		done
+	done
+}
+
+#
+# do_setup_one VERSION PLATFORM ARCH: download and unpack a specific Node
+# version into the current directory.
+#
+function do_setup_one
+{
+	local version platform arch
+	local dir file url
+
+	version="$1"
+	platform="$2"
+	arch="$3"
+
+	dir="node-v$version-$platform-$arch"
+	file="$dir.tar.gz"
+	url="$rn_nodebase/v$version/$file"
+
+	if [[ -d "$dir" ]]; then
+		echo "Skipping Node version $version" \
+		    "($platform $arch) -- already found";
+		return 0
+	fi
+
+	echo -n "Setting up Node version $version ($platform $arch) ... "
+
+	if ! curl -fsS -o $file "$url"; then
+		echo "download failed."
+		return 1
+	fi
+
+	if ! tar xzf $file; then
+		echo "extract failed."
+		return 1
+	fi
+
+	rm -f $file
+	echo "done."
+}
+
+#
+# do_run: run mdb_v8 tests on all configured Node versions
+#
+function do_run
+{
+	if ! cd "$rn_target_dir" 2>/dev/null; then
+		fail "failed to chdir \"$rn_target_dir\"" \
+		    "(have you run \"setup\"?)"
+	fi
+
+	rn_target_dir="$(pwd)"
+	cd - > /dev/null
+
+	cd "$rn_srcroot" || fail "failed to cd \"$rn_srcroot\""
+	for version in $rn_versions; do
+		for arch in $rn_arches; do
+			do_run_one "$version" "$rn_platform" "$arch"
+		done
+	done
+
+	echo
+	echo "Summary:"
+	echo -e "$rn_results"
+	exit "$rn_nerrors"
+}
+
+#
+# do_run_one VERSION PLATFORM ARCH: run tests with the given Node version.
+#
+function do_run_one
+{
+	local version platform arch
+	local dir result
+
+	version="$1"
+	platform="$2"
+	arch="$3"
+
+	dir="$rn_target_dir/node-v$version-$platform-$arch"
+	if [[ ! -d "$dir" || ! -f "$dir/bin/node" ]]; then
+		fail "Did not find $dir/bin/node (have you run \"setup\"?)"
+	fi
+
+	if (
+	    export PATH="$dir/bin:$PATH"
+	    node -pe '"node " + process.version + " " + process.arch'
+	    tools/catest -a
+	); then
+		result="$(printf "%-7s %5s %3s: success" \
+		    "$version" "$platform" "$arch")"
+	else
+		result="$(printf "%7s %5s %3s: fail" \
+		    "$version" "$platform" "$arch")"
+		rn_nerrors=$(( rn_nerrors + 1 ))
+	fi
+
+	rn_results="$rn_results$result\n"
+}
+
+main "$@"
