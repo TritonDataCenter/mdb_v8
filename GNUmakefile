@@ -46,7 +46,14 @@ MDBV8_VERS_TAG	 = "dev"
 # List of source files that will become objects.  (These entries do not include
 # the "src/" directory prefix.)
 #
-MDBV8_SOURCES		 = mdb_v8.c mdb_v8_cfg.c mdb_v8_context.c
+MDBV8_SOURCES		 = \
+    mdb_v8.c \
+    mdb_v8_cfg.c \
+    mdb_v8_function.c \
+    mdb_v8_strbuf.c \
+    mdb_v8_string.c \
+    mdb_v8_subr.c
+
 MDBV8_GENSOURCES	 = mdb_v8_version.c
 
 # List of source files to run through cstyle.  This includes header files.
@@ -78,7 +85,10 @@ CSTYLE_FLAGS		+= -cCp
 CATEST			 = tools/catest
 
 # JavaScript source files (used in test code)
-JS_FILES		 = $(wildcard test/standalone/*.js)
+JS_FILES		 = $(wildcard test/standalone/*.js) \
+			   $(wildcard tools/mdbv8diff/*.js) \
+			   $(wildcard tools/mdbv8diff/issues/*.js) \
+			   tools/mdbv8diff/mdbv8diff
 JSL_FILES_NODE		 = $(JS_FILES)
 JSSTYLE_FILES		 = $(JS_FILES)
 JSL_CONF_NODE		 = tools/jsl.node.conf

@@ -1,0 +1,17 @@
+{
+	"name": "mdbv8diff",
+	"version": "1.0.0",
+	"description": "diff output from mdbv8 for testing",
+	"main": "mdbv8diff",
+	"private": true,
+	"dependencies": {
+		"assert-plus": "0.1.5",
+		"cmdutil": "0.1.0",
+		"extsprintf": "1.3.0",
+		"jsprim": "1.2.2",
+		"lstream": "0.0.4",
+		"posix-getopt": "1.2.0",
+		"verror": "1.6.0",
+		"vstream": "0.1.0"
+	}
+}

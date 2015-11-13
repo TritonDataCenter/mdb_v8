@@ -25,7 +25,6 @@
 #include <assert.h>
 #include <ctype.h>
 #include <inttypes.h>
-#include <stdarg.h>
 #include <stdio.h>
 #include <string.h>
 #include <libproc.h>
@@ -228,9 +227,6 @@ ssize_t V8_OFF_JSTYPEDARRAY_LENGTH;
 ssize_t V8_OFF_JSARRAYBUFFER_BACKINGSTORE;
 ssize_t V8_OFF_JSARRAYBUFFERVIEW_BUFFER;
 ssize_t V8_OFF_JSARRAYBUFFERVIEW_CONTENT_OFFSET;
-
-/* see node_string.h */
-#define	NODE_OFF_EXTSTR_DATA		sizeof (uintptr_t)
 
 #define	V8_CONSTANT_OPTIONAL		1
 #define	V8_CONSTANT_HASFALLBACK		2
@@ -1216,20 +1212,8 @@ conf_class_compute_offsets(v8_class_t *clp)
 /*
  * Utility functions
  */
-#define	JSSTR_NONE		0
-#define	JSSTR_NUDE		JSSTR_NONE
-
-#define	JSSTR_FLAGSHIFT		16
-#define	JSSTR_VERBOSE		(0x1 << JSSTR_FLAGSHIFT)
-#define	JSSTR_QUOTED		(0x2 << JSSTR_FLAGSHIFT)
-#define	JSSTR_ISASCII		(0x4 << JSSTR_FLAGSHIFT)
-
-#define	JSSTR_MAXDEPTH		512
-#define	JSSTR_DEPTH(f)		((f) & ((1 << JSSTR_FLAGSHIFT) - 1))
-#define	JSSTR_BUMPDEPTH(f)	((f) + 1)
 
 static int jsstr_print(uintptr_t, uint_t, char **, size_t *);
-static boolean_t jsobj_is_undefined(uintptr_t addr);
 static boolean_t jsobj_is_hole(uintptr_t addr);
 static boolean_t jsobj_maybe_garbage(uintptr_t addr);
 
@@ -1383,7 +1367,7 @@ read_heap_ptr(uintptr_t *valp, uintptr_t addr, ssize_t off)
  * Like read_heap_ptr, but assume the field is an SMI and store the actual value
  * into *valp rather than the encoded representation.
  */
-static int
+int
 read_heap_smi(uintptr_t *valp, uintptr_t addr, ssize_t off)
 {
 	if (read_heap_ptr(valp, addr, off) != 0)
@@ -1413,6 +1397,8 @@ read_heap_double(double *valp, uintptr_t addr, ssize_t off)
 /*
  * Assuming "addr" refers to a FixedArray, return a newly-allocated array
  * representing its contents.
+ *
+ * TODO This function is deprecated.  See v8fixedarray_load().
  */
 int
 read_heap_array(uintptr_t addr, uintptr_t **retp, size_t *lenp, int flags)
@@ -1478,7 +1464,7 @@ read_heap_byte(uint8_t *valp, uintptr_t addr, ssize_t off)
  * that this is one of those fields that might be encoded or might not be,
  * depending on whether the address is word-aligned.
  */
-static int
+int
 read_heap_maybesmi(uintptr_t *valp, uintptr_t addr, ssize_t off)
 {
 #ifdef _LP64
@@ -1581,7 +1567,7 @@ read_heap_dict(uintptr_t addr,
 		goto out;
 	}
 
-	for (i = V8_DICT_START_INDEX + V8_DICT_PREFIX_SIZE; i < ndict;
+	for (i = V8_DICT_START_INDEX + V8_DICT_PREFIX_SIZE; i + 1 < ndict;
 	    i += V8_DICT_ENTRY_SIZE) {
 		/*
 		 * The layout here is key, value, details. (This is hardcoded
@@ -1951,334 +1937,30 @@ obj_print_class(uintptr_t addr, v8_class_t *clp)
 /*
  * Print the ASCII string for the given JS string, expanding ConsStrings and
  * ExternalStrings as needed.
+ *
+ * This is an internal legacy interface.  Callers should use v8string_load() and
+ * v8string_write() instead.
  */
-static int jsstr_print_seq(uintptr_t, uint_t, char **, size_t *, size_t,
-    ssize_t);
-static int jsstr_print_cons(uintptr_t, uint_t, char **, size_t *);
-static int jsstr_print_sliced(uintptr_t, uint_t, char **, size_t *);
-static int jsstr_print_external(uintptr_t, uint_t, char **, size_t *);
-
 static int
 jsstr_print(uintptr_t addr, uint_t flags, char **bufp, size_t *lenp)
 {
-	uint8_t typebyte;
-	int err = 0;
-	char *lbufp;
-	size_t llen;
-	char buf[64];
-	boolean_t verbose = flags & JSSTR_VERBOSE ? B_TRUE : B_FALSE;
+	mdbv8_strbuf_t strbuf;
+	v8string_t *strp;
+	int rv;
 
-	if (read_typebyte(&typebyte, addr) != 0) {
-		(void) bsnprintf(bufp, lenp, "<could not read type>");
-		return (-1);
-	}
-
-	if (!V8_TYPE_STRING(typebyte)) {
-		(void) bsnprintf(bufp, lenp, "<not a string>");
-		return (-1);
-	}
-
-	if (verbose) {
-		lbufp = buf;
-		llen = sizeof (buf);
-		(void) obj_jstype(addr, &lbufp, &llen, NULL);
-		mdb_printf("%s\n", buf);
-		(void) mdb_inc_indent(4);
-	}
-
-	if (JSSTR_DEPTH(flags) > JSSTR_MAXDEPTH) {
-		(void) bsnprintf(bufp, lenp, "<maximum depth exceeded>");
-		return (-1);
-	}
-
-	if (V8_STRENC_ASCII(typebyte))
-		flags |= JSSTR_ISASCII;
-	else
-		flags &= ~JSSTR_ISASCII;
-
-	flags = JSSTR_BUMPDEPTH(flags);
-
-	if (V8_STRREP_SEQ(typebyte))
-		err = jsstr_print_seq(addr, flags, bufp, lenp, 0, -1);
-	else if (V8_STRREP_CONS(typebyte))
-		err = jsstr_print_cons(addr, flags, bufp, lenp);
-	else if (V8_STRREP_EXT(typebyte))
-		err = jsstr_print_external(addr, flags, bufp, lenp);
-	else if (V8_STRREP_SLICED(typebyte))
-		err = jsstr_print_sliced(addr, flags, bufp, lenp);
-	else {
-		(void) bsnprintf(bufp, lenp, "<unknown string type>");
-		err = -1;
-	}
-
-	if (verbose)
-		(void) mdb_dec_indent(4);
-
-	return (err);
-}
-
-static int
-jsstr_print_seq(uintptr_t addr, uint_t flags, char **bufp, size_t *lenp,
-    size_t sliceoffset, ssize_t slicelen)
-{
-	/*
-	 * To allow the caller to allocate a very large buffer for strings,
-	 * we'll allocate a buffer sized based on our input, making it at
-	 * least enough space for our ellipsis and at most 256K.
-	 */
-	uintptr_t i, nreadoffset, blen, nstrbytes, nstrchrs;
-	ssize_t nreadbytes;
-	boolean_t verbose = flags & JSSTR_VERBOSE ? B_TRUE : B_FALSE;
-	boolean_t quoted = flags & JSSTR_QUOTED ? B_TRUE : B_FALSE;
-	char *buf;
-	uint16_t chrval;
-
-	if (read_heap_smi(&nstrchrs, addr, V8_OFF_STRING_LENGTH) != 0) {
-		(void) bsnprintf(bufp, lenp,
-		    "<string (failed to read length)>");
-		return (-1);
-	}
-
-	if (slicelen != -1)
-		nstrchrs = slicelen;
-
-	blen = ((flags & JSSTR_ISASCII) != 0) ? *lenp : 2 * (*lenp);
-	if ((blen = MIN(blen, 256 * 1024)) == 0)
-		return (0);
-
-	if ((flags & JSSTR_ISASCII) != 0) {
-		nstrbytes = nstrchrs;
-		nreadoffset = sliceoffset;
-		nreadbytes = nstrbytes + sizeof ("\"\"") <= *lenp ?
-		    nstrbytes : *lenp - sizeof ("\"\"[...]");
-
-		if (nreadbytes > blen)
-			nreadbytes = blen - sizeof ("\"\"[...]");
+	mdbv8_strbuf_init(&strbuf, *bufp, *lenp);
+	strp = v8string_load(addr, UM_SLEEP);
+	if (strp == NULL) {
+		mdbv8_strbuf_appends(&strbuf,
+		    "<string (failed to load string)>", flags);
+		rv = -1;
 	} else {
-		nstrbytes = 2 * nstrchrs;
-		nreadoffset = 2 * sliceoffset;
-		nreadbytes = nstrchrs + sizeof ("\"\"") <= *lenp ?
-		    nstrbytes : 2 * (*lenp - sizeof ("\"\"[...]"));
-
-		if (nreadbytes > blen)
-			nreadbytes = blen - 2 * sizeof ("\"\"[...]");
+		rv = v8string_write(strp, &strbuf, MSF_ASCIIONLY, flags);
+		v8string_free(strp);
 	}
 
-	if (nreadbytes < 0) {
-		/*
-		 * We don't even have the room to store the ellipsis; zero
-		 * the buffer out and set the length to zero.
-		 */
-		**bufp = '\0';
-		*lenp = 0;
-		return (0);
-	}
-
-	if (verbose) {
-		mdb_printf("length: %d chars (%d bytes), "
-		    "will read %d bytes from offset %d\n",
-		    nstrchrs, nstrbytes, nreadbytes, nreadoffset);
-		mdb_printf("given buffer size: %d, internal buffer: %d\n",
-		    *lenp, blen);
-	}
-
-	if (nstrbytes == 0) {
-		(void) bsnprintf(bufp, lenp, "%s%s",
-		    quoted ? "\"" : "", quoted ? "\"" : "");
-		return (0);
-	}
-
-	buf = alloca(blen);
-	buf[0] = '\0';
-
-	if ((flags & JSSTR_ISASCII) != 0) {
-		if (mdb_readstr(buf, nreadbytes + 1,
-		    addr + V8_OFF_SEQASCIISTR_CHARS + nreadoffset) == -1) {
-			v8_warn("failed to read SeqString data");
-			return (-1);
-		}
-
-		if (nreadbytes != nstrbytes)
-			(void) strlcat(buf, "[...]", blen);
-
-		(void) bsnprintf(bufp, lenp, "%s%s%s",
-		    quoted ? "\"" : "", buf, quoted ? "\"" : "");
-	} else {
-		if (mdb_readstr(buf, nreadbytes,
-		    addr + V8_OFF_SEQTWOBYTESTR_CHARS + nreadoffset) == -1) {
-			v8_warn("failed to read SeqTwoByteString data");
-			return (-1);
-		}
-
-		(void) bsnprintf(bufp, lenp, "%s", quoted ? "\"" : "");
-		for (i = 0; i < nreadbytes; i += 2) {
-			/*LINTED*/
-			chrval = *((uint16_t *)(buf + i));
-			(void) bsnprintf(bufp, lenp, "%c",
-			    (isascii(chrval) || chrval == 0) ?
-			    (char)chrval : '?');
-		}
-		if (nreadbytes != nstrbytes)
-			(void) bsnprintf(bufp, lenp, "[...]");
-		(void) bsnprintf(bufp, lenp, "%s", quoted ? "\"" : "");
-	}
-
-	return (0);
-}
-
-static int
-jsstr_print_cons(uintptr_t addr, uint_t flags, char **bufp, size_t *lenp)
-{
-	boolean_t verbose = flags & JSSTR_VERBOSE ? B_TRUE : B_FALSE;
-	boolean_t quoted = flags & JSSTR_QUOTED ? B_TRUE : B_FALSE;
-	uintptr_t ptr1, ptr2;
-
-	if (read_heap_ptr(&ptr1, addr, V8_OFF_CONSSTRING_FIRST) != 0) {
-		(void) bsnprintf(bufp, lenp,
-		    "<cons string (failed to read first)>");
-		return (-1);
-	}
-
-	if (read_heap_ptr(&ptr2, addr, V8_OFF_CONSSTRING_SECOND) != 0) {
-		(void) bsnprintf(bufp, lenp,
-		    "<cons string (failed to read second)>");
-		return (-1);
-	}
-
-	if (verbose) {
-		mdb_printf("ptr1: %p\n", ptr1);
-		mdb_printf("ptr2: %p\n", ptr2);
-	}
-
-	if (quoted)
-		(void) bsnprintf(bufp, lenp, "\"");
-
-	flags = JSSTR_BUMPDEPTH(flags) & ~JSSTR_QUOTED;
-
-	if (jsstr_print(ptr1, flags, bufp, lenp) != 0)
-		return (-1);
-
-	if (jsstr_print(ptr2, flags, bufp, lenp) != 0)
-		return (-1);
-
-	if (quoted)
-		(void) bsnprintf(bufp, lenp, "\"");
-
-	return (0);
-}
-
-static int
-jsstr_print_sliced(uintptr_t addr, uint_t flags, char **bufp, size_t *lenp)
-{
-	uintptr_t parent, offset, length;
-	uint8_t typebyte;
-	boolean_t verbose = flags & JSSTR_VERBOSE ? B_TRUE : B_FALSE;
-	boolean_t quoted = flags & JSSTR_QUOTED ? B_TRUE : B_FALSE;
-
-	if (read_heap_ptr(&parent, addr, V8_OFF_SLICEDSTRING_PARENT) != 0) {
-		(void) bsnprintf(bufp, lenp,
-		    "<sliced string (failed to read parent)>");
-		return (-1);
-	}
-
-	if (read_heap_smi(&offset, addr, V8_OFF_SLICEDSTRING_OFFSET) != 0) {
-		(void) bsnprintf(bufp, lenp,
-		    "<sliced string (failed to read offset)>");
-		return (-1);
-	}
-
-	if (read_heap_smi(&length, addr, V8_OFF_STRING_LENGTH) != 0) {
-		(void) bsnprintf(bufp, lenp,
-		    "<sliced string (failed to read length)>");
-		return (-1);
-	}
-
-	if (verbose)
-		mdb_printf("parent: %p, offset = %d, length = %d\n",
-		    parent, offset, length);
-
-	if (read_typebyte(&typebyte, parent) != 0) {
-		(void) bsnprintf(bufp, lenp,
-		    "<sliced string (failed to read parent type)>");
-		return (0);
-	}
-
-	if (!V8_STRREP_SEQ(typebyte)) {
-		(void) bsnprintf(bufp, lenp,
-		    "<sliced string (parent is not a sequential string)>");
-		return (0);
-	}
-
-	if (quoted)
-		(void) bsnprintf(bufp, lenp, "\"");
-
-	flags = JSSTR_BUMPDEPTH(flags) & ~JSSTR_QUOTED;
-
-	if (V8_STRENC_ASCII(typebyte))
-		flags |= JSSTR_ISASCII;
-
-	if (jsstr_print_seq(parent, flags, bufp, lenp, offset, length) != 0)
-		return (-1);
-
-	if (quoted)
-		(void) bsnprintf(bufp, lenp, "\"");
-
-	return (0);
-}
-
-static int
-jsstr_print_external(uintptr_t addr, uint_t flags, char **bufp, size_t *lenp)
-{
-	uintptr_t ptr1, ptr2;
-	size_t blen = MAX(1, (ssize_t)(*lenp) - 2);
-	char *buf;
-	boolean_t quoted = flags & JSSTR_QUOTED ? B_TRUE : B_FALSE;
-	int rval = -1;
-
-	if ((flags & JSSTR_ISASCII) == 0) {
-		(void) bsnprintf(bufp, lenp, "<external two-byte string>");
-		return (0);
-	}
-
-	if (flags & JSSTR_VERBOSE)
-		mdb_printf("assuming Node.js string\n");
-
-	if (read_heap_ptr(&ptr1, addr, V8_OFF_EXTERNALSTRING_RESOURCE) != 0) {
-		(void) bsnprintf(bufp, lenp,
-		    "<external string (failed to read resource)>");
-		return (-1);
-	}
-
-	if (mdb_vread(&ptr2, sizeof (ptr2),
-	    ptr1 + NODE_OFF_EXTSTR_DATA) == -1) {
-		(void) bsnprintf(bufp, lenp, "<external string (failed to "
-		    "read node external pointer %p)>",
-		    ptr1 + NODE_OFF_EXTSTR_DATA);
-		return (-1);
-	}
-
-	buf = mdb_alloc(blen, UM_SLEEP);
-
-	if (mdb_readstr(buf, blen, ptr2) == -1) {
-		(void) bsnprintf(bufp, lenp, "<external string "
-		    "(failed to read ExternalString data)>");
-		goto out;
-	}
-
-	if (buf[0] != '\0' && !isascii(buf[0])) {
-		(void) bsnprintf(bufp, lenp, "<external string "
-		    "(failed to read ExternalString ascii data)>");
-		goto out;
-	}
-
-	(void) bsnprintf(bufp, lenp, "%s%s%s",
-	    quoted ? "\"" : "", buf, quoted ? "\"" : "");
-
-	rval = 0;
-out:
-	mdb_free(buf, blen);
-
-	return (rval);
+	mdbv8_strbuf_legacy_update(&strbuf, bufp, lenp);
+	return (rv);
 }
 
 /*
@@ -2317,7 +1999,7 @@ jsobj_is_oddball(uintptr_t addr, char *oddball)
 	return (strcmp(buf, oddball) == 0);
 }
 
-static boolean_t
+boolean_t
 jsobj_is_undefined(uintptr_t addr)
 {
 	return (jsobj_is_oddball(addr, "undefined"));
@@ -3122,44 +2804,27 @@ jsfunc_lines(uintptr_t scriptp,
  * Given a SharedFunctionInfo object, prints into bufp a name of the function
  * suitable for printing.  This function attempts to infer a name for anonymous
  * functions.
+ *
+ * This is an internal legacy interface.  Callers should use v8funcinfo_load()
+ * and related functions instead.
  */
 static int
 jsfunc_name(uintptr_t funcinfop, char **bufp, size_t *lenp)
 {
-	uintptr_t ptrp;
-	char *bufs = *bufp;
+	mdbv8_strbuf_t strbuf;
+	v8funcinfo_t *fip;
+	int rv;
 
-	if (read_heap_ptr(&ptrp, funcinfop,
-	    V8_OFF_SHAREDFUNCTIONINFO_NAME) != 0) {
-		(void) bsnprintf(bufp, lenp,
-		    "<function (failed to read SharedFunctionInfo)>");
+	mdbv8_strbuf_init(&strbuf, *bufp, *lenp);
+	fip = v8funcinfo_load(funcinfop, UM_SLEEP);
+	if (fip == NULL) {
 		return (-1);
 	}
 
-	if (jsstr_print(ptrp, JSSTR_NUDE, bufp, lenp) != 0)
-		return (-1);
-
-	if (*bufp != bufs)
-		return (0);
-
-	if (read_heap_ptr(&ptrp, funcinfop,
-	    V8_OFF_SHAREDFUNCTIONINFO_INFERRED_NAME) != 0) {
-		(void) bsnprintf(bufp, lenp, "<anonymous>");
-		return (0);
-	}
-
-	(void) bsnprintf(bufp, lenp, "<anonymous> (as ");
-	bufs = *bufp;
-
-	if (jsstr_print(ptrp, JSSTR_NUDE, bufp, lenp) != 0)
-		return (-1);
-
-	if (*bufp == bufs)
-		(void) bsnprintf(bufp, lenp, "<anon>");
-
-	(void) bsnprintf(bufp, lenp, ")");
-
-	return (0);
+	rv = v8funcinfo_funcname(fip, &strbuf, MSF_ASCIIONLY);
+	v8funcinfo_free(fip);
+	mdbv8_strbuf_legacy_update(&strbuf, bufp, lenp);
+	return (rv);
 }
 
 /*
@@ -3668,22 +3333,21 @@ dcmd_v8classes(uintptr_t addr, uint_t flags, int argc, const mdb_arg_t *argv)
 }
 
 static int
-do_v8code(uintptr_t addr, boolean_t opt_d)
+do_v8code(v8code_t *codep, boolean_t opt_d)
 {
-	uintptr_t instrlen;
-	ssize_t instroff = V8_OFF_CODE_INSTRUCTION_START;
+	uintptr_t instrstart, instrsize;
 
-	if (read_heap_ptr(&instrlen, addr, V8_OFF_CODE_INSTRUCTION_SIZE) != 0)
-		return (DCMD_ERR);
+	instrstart = v8code_instructions_start(codep);
+	instrsize = v8code_instructions_size(codep);
 
-	mdb_printf("code: %p\n", addr);
-	mdb_printf("instructions: [%p, %p)\n", addr + instroff,
-	    addr + instroff + instrlen);
+	mdb_printf("code: %p\n", v8code_addr(codep));
+	mdb_printf("instructions: [%p, %p)\n", instrstart,
+	    instrstart + instrsize);
 
 	if (!opt_d)
 		return (DCMD_OK);
 
-	mdb_set_dot(addr + instroff);
+	mdb_set_dot(instrstart);
 
 	do {
 		(void) mdb_inc_indent(8); /* gets reset by mdb_eval() */
@@ -3703,7 +3367,7 @@ do_v8code(uintptr_t addr, boolean_t opt_d)
 			v8_warn("failed to disassemble at %p", mdb_get_dot());
 			return (DCMD_ERR);
 		}
-	} while (mdb_get_dot() < addr + instroff + instrlen);
+	} while (mdb_get_dot() < instrstart + instrsize);
 
 	(void) mdb_dec_indent(8);
 	return (DCMD_OK);
@@ -3714,25 +3378,35 @@ static int
 dcmd_v8code(uintptr_t addr, uint_t flags, int argc, const mdb_arg_t *argv)
 {
 	boolean_t opt_d = B_FALSE;
+	v8code_t *codep;
+	int rv;
 
 	if (mdb_getopts(argc, argv, 'd', MDB_OPT_SETBITS, B_TRUE, &opt_d,
 	    NULL) != argc)
 		return (DCMD_USAGE);
 
-	return (do_v8code(addr, opt_d));
+	codep = v8code_load(addr, UM_NOSLEEP | UM_GC);
+	if (codep == NULL) {
+		return (DCMD_ERR);
+	}
+
+	rv = do_v8code(codep, opt_d);
+	v8code_free(codep);
+	return (rv);
 }
 
 /* ARGSUSED */
 static int
 dcmd_v8function(uintptr_t addr, uint_t flags, int argc, const mdb_arg_t *argv)
 {
-	uint8_t type;
-	uintptr_t funcinfop, scriptp, lendsp, tokpos, namep, codep;
-	uintptr_t contextp, scopeinfop;
-	char *bufp;
-	size_t len;
 	boolean_t opt_d = B_FALSE;
-	char buf[512];
+	v8function_t *fp = NULL;
+	v8context_t *ctxp = NULL;
+	v8scopeinfo_t *sip = NULL;
+	v8funcinfo_t *fip = NULL;
+	v8code_t *codep = NULL;
+	mdbv8_strbuf_t *strb = NULL;
+	int rv = DCMD_ERR;
 
 	if (mdb_getopts(argc, argv, 'd', MDB_OPT_SETBITS, B_TRUE, &opt_d,
 	    NULL) != argc)
@@ -3740,76 +3414,43 @@ dcmd_v8function(uintptr_t addr, uint_t flags, int argc, const mdb_arg_t *argv)
 
 	v8_warnings++;
 
-	if (read_typebyte(&type, addr) != 0)
-		goto err;
-
-	if (strcmp(enum_lookup_str(v8_types, type, ""), "JSFunction") != 0) {
-		v8_warn("%p is not an instance of JSFunction\n", addr);
-		goto err;
+	if ((fp = v8function_load(addr, UM_NOSLEEP)) == NULL ||
+	    (ctxp = v8function_context(fp, UM_NOSLEEP)) == NULL ||
+	    (fip = v8function_funcinfo(fp, UM_NOSLEEP)) == NULL ||
+	    (codep = v8funcinfo_code(fip, UM_NOSLEEP)) == NULL ||
+	    (strb = mdbv8_strbuf_alloc(512, UM_NOSLEEP)) == NULL) {
+		goto out;
 	}
 
-	if (read_heap_ptr(&funcinfop, addr, V8_OFF_JSFUNCTION_SHARED) != 0 ||
-	    read_heap_maybesmi(&tokpos, funcinfop,
-	    V8_OFF_SHAREDFUNCTIONINFO_FUNCTION_TOKEN_POSITION) != 0 ||
-	    read_heap_ptr(&scriptp, funcinfop,
-	    V8_OFF_SHAREDFUNCTIONINFO_SCRIPT) != 0 ||
-	    read_heap_ptr(&namep, scriptp, V8_OFF_SCRIPT_NAME) != 0 ||
-	    read_heap_ptr(&lendsp, scriptp, V8_OFF_SCRIPT_LINE_ENDS) != 0)
-		goto err;
+	mdbv8_strbuf_sprintf(strb, "%p: JSFunction: ", addr);
+	(void) v8funcinfo_funcname(fip, strb, MSF_ASCIIONLY);
+	mdbv8_strbuf_sprintf(strb, "\n");
 
+	mdbv8_strbuf_sprintf(strb, "defined at ");
+	(void) v8funcinfo_scriptpath(fip, strb, MSF_ASCIIONLY);
+	mdbv8_strbuf_sprintf(strb, " ");
+	(void) v8funcinfo_definition_location(fip, strb, MSF_ASCIIONLY);
+	mdb_printf("%s\n", mdbv8_strbuf_tocstr(strb));
 
-	if (read_heap_ptr(&contextp, addr, V8_OFF_JSFUNCTION_CONTEXT) != 0)
-		goto err;
-
-	/*
-	 * The token position is normally a SMI, so read_heap_maybesmi() will
-	 * interpret the value for us.  However, this code uses its SMI-encoded
-	 * value, so convert it back here.
-	 */
-	tokpos = V8_VALUE_SMI(tokpos);
-
-	bufp = buf;
-	len = sizeof (buf);
-	if (jsfunc_name(funcinfop, &bufp, &len) != 0)
-		goto err;
-
-	mdb_printf("%p: JSFunction: %s\n", addr, buf);
-
-	bufp = buf;
-	len = sizeof (buf);
-	mdb_printf("defined at ");
-
-	if (jsstr_print(namep, JSSTR_NUDE, &bufp, &len) == 0)
-		mdb_printf("%s ", buf);
-
-	if (jsfunc_lineno(lendsp, tokpos, buf, sizeof (buf), NULL) == 0)
-		mdb_printf("%s", buf);
-
-	mdb_printf("\n");
-
-	mdb_printf("context: %p\n", contextp);
-	if (V8_OFF_SHAREDFUNCTIONINFO_SCOPE_INFO != -1) {
-		if (read_heap_ptr(&scopeinfop, funcinfop,
-		    V8_OFF_SHAREDFUNCTIONINFO_SCOPE_INFO) != 0) {
-			goto err;
-		}
-
-		mdb_printf("shared scope_info: %p\n", scopeinfop);
-	} else {
+	mdb_printf("context: %p\n", v8context_addr(ctxp));
+	sip = v8function_scopeinfo(fp, UM_NOSLEEP);
+	if (sip == NULL) {
 		mdb_printf("shared scope_info not available\n");
+	} else {
+		mdb_printf("shared scope_info: %p\n", v8scopeinfo_addr(sip));
 	}
 
-	if (read_heap_ptr(&codep,
-	    funcinfop, V8_OFF_SHAREDFUNCTIONINFO_CODE) != 0)
-		goto err;
+	rv = do_v8code(codep, opt_d);
 
+out:
+	v8code_free(codep);
+	v8funcinfo_free(fip);
+	v8scopeinfo_free(sip);
+	v8context_free(ctxp);
+	v8function_free(fp);
+	mdbv8_strbuf_free(strb);
 	v8_warnings--;
-
-	return (do_v8code(codep, opt_d));
-
-err:
-	v8_warnings--;
-	return (DCMD_ERR);
+	return (rv);
 }
 
 /*
@@ -6121,24 +5762,21 @@ dcmd_v8field(uintptr_t addr, uint_t flags, int argc, const mdb_arg_t *argv)
 static int
 dcmd_v8array(uintptr_t addr, uint_t flags, int argc, const mdb_arg_t *argv)
 {
-	uint8_t type;
-	uintptr_t *array;
-	size_t ii, len;
+	v8fixedarray_t *arrayp;
+	uintptr_t *elts;
+	size_t i, len;
 
-	if (read_typebyte(&type, addr) != 0)
-		return (DCMD_ERR);
-
-	if (type != V8_TYPE_FIXEDARRAY) {
-		mdb_warn("%p is not an instance of FixedArray\n", addr);
+	if ((arrayp = v8fixedarray_load(addr, UM_SLEEP | UM_GC)) == NULL) {
 		return (DCMD_ERR);
 	}
 
-	if (read_heap_array(addr, &array, &len, UM_SLEEP | UM_GC) != 0)
-		return (DCMD_ERR);
+	elts = v8fixedarray_elts(arrayp);
+	len = v8fixedarray_length(arrayp);
 
-	for (ii = 0; ii < len; ii++)
-		mdb_printf("%p\n", array[ii]);
+	for (i = 0; i < len; i++)
+		mdb_printf("%p\n", elts[i]);
 
+	v8fixedarray_free(arrayp);
 	return (DCMD_OK);
 }
 
@@ -6184,21 +5822,42 @@ static int
 dcmd_v8str(uintptr_t addr, uint_t flags, int argc, const mdb_arg_t *argv)
 {
 	boolean_t opt_v = B_FALSE;
-	char buf[512 * 1024];
-	char *bufp;
-	size_t len;
+	boolean_t opt_r = B_FALSE;
+	int64_t bufsz = -1;
+	v8string_t *strp;
+	mdbv8_strbuf_t *strb;
 
-	if (mdb_getopts(argc, argv, 'v', MDB_OPT_SETBITS, B_TRUE, &opt_v,
-	    NULL) != argc)
+	if (mdb_getopts(argc, argv,
+	    'v', MDB_OPT_SETBITS, B_TRUE, &opt_v,
+	    'N', MDB_OPT_UINT64, &bufsz,
+	    'r', MDB_OPT_SETBITS, B_TRUE, &opt_r, NULL) != argc) {
 		return (DCMD_USAGE);
+	}
 
-	bufp = buf;
-	len = sizeof (buf);
-	if (jsstr_print(addr, (opt_v ? JSSTR_VERBOSE : JSSTR_NONE) |
-	    JSSTR_QUOTED, &bufp, &len) != 0)
+	if ((strp = v8string_load(addr, UM_GC)) == NULL) {
+		return (DCMD_ERR);
+	}
+
+	if (bufsz == -1) {
+		/*
+		 * The buffer size should accommodate the length of the string,
+		 * plus the surrounding quotes, plus the terminator.  (If we're
+		 * wrong here, the visible string will just be truncated.)
+		 */
+		bufsz = v8string_length(strp) + sizeof ("\"\"");
+	}
+
+	if ((strb = mdbv8_strbuf_alloc(bufsz, UM_GC)) == NULL) {
+		return (DCMD_ERR);
+	}
+
+	if (v8string_write(strp, strb,
+	    opt_r ? MSF_ASCIIONLY : MSF_JSON,
+	    (opt_v ? JSSTR_VERBOSE : JSSTR_NONE) |
+	    (opt_r ? JSSTR_NONE : JSSTR_QUOTED)) != 0)
 		return (DCMD_ERR);
 
-	mdb_printf("%s\n", buf);
+	mdb_printf("%s\n", mdbv8_strbuf_tocstr(strb));
 	return (DCMD_OK);
 }
 

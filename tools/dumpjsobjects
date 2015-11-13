@@ -1,0 +1,45 @@
+#!/bin/bash
+
+#
+# dumpjsobjects CORE_FILE DMOD_FILE OBJ_LIST OBJ_CONTENTS
+#
+# Dump all JavaScript objects in CORE_FILE using mdb_v8 binary DMOD_FILE.  The
+# sorted list of all objects is stored into the file OBJ_LIST and the contents
+# of all objects is stored into the file OBJ_CONTENTS.
+#
+
+set -o pipefail
+
+function usage
+{
+	cat <<EOF >&2
+usage: dumpjsobjects CORE_FILE DMOD_FILE OBJ_LIST OBJ_CONTENTS
+
+Dump all JavaScript objects in CORE_FILE using mdb_v8 binary DMOD_FILE.  The
+sorted list of all objects is stored into the file OBJ_LIST and the contents of
+all objects is stored into the file OBJ_CONTENTS.
+EOF
+	exit 2
+}
+
+function main
+{
+	local listcmd printcmd
+
+	if [[ $# != 4 ]]; then
+		usage
+	fi
+
+	listcmd="::findjsobjects -l | ::findjsobjects ! sort > $3"
+	printcmd="::cat $3 | ::jsprint -a -d 2 -N 0t100 ! cat > $4"
+	set -o xtrace
+	if ! mdb -e "::load $2; $listcmd" "$1" ||
+	   ! mdb -e "::load $2; $printcmd" "$1"; then
+		echo "FAILED." >&2
+		exit 1
+	fi
+
+	echo "done."
+}
+
+main "$@"
