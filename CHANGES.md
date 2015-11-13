@@ -12,8 +12,15 @@
 
 ## Unreleased changes
 
+None.
+
+## v1.1.2 (2015-11-12)
+
 * #48 want tool for running tests on multiple Node versions
 * #35 clean up interfaces for working with functions and strings
+
+The change for #35 fixed a number of small issues in printing objects and
+strings.
 
 ## v1.1.1 (2015-10-02)
 
