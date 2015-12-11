@@ -12,6 +12,7 @@
 
 ## Unreleased changes
 
+* #52 mdb dumped core after using jsclosure on invalid closure
 * #51 v8internal fails for valid JSObject
 
 ## v1.1.2 (2015-11-12)

@@ -563,6 +563,7 @@ v8context_load(uintptr_t addr, int memflags)
 	}
 
 	ctxp->v8ctx_addr = addr;
+	ctxp->v8ctx_memflags = memflags;
 	if (read_heap_array(addr, &ctxp->v8ctx_elts,
 	    &ctxp->v8ctx_nelts, memflags) != 0) {
 		goto err;
