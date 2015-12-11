@@ -12,7 +12,7 @@
 
 ## Unreleased changes
 
-None.
+* #51 v8internal fails for valid JSObject
 
 ## v1.1.2 (2015-11-12)
 

@@ -1790,6 +1790,7 @@ obj_v8internal(uintptr_t addr, uint_t idx, uintptr_t *valp)
 {
 	char *bufp;
 	size_t len;
+	const char *rqclass;
 	ssize_t off;
 	uint8_t type;
 
@@ -1806,8 +1807,13 @@ obj_v8internal(uintptr_t addr, uint_t idx, uintptr_t *valp)
 		return (DCMD_ERR);
 	}
 
+	if ((rqclass = enum_lookup_str(v8_types, type, NULL)) == NULL) {
+		mdb_warn("%p: unknown type\n");
+		return (DCMD_ERR);
+	}
+
 	for (clp = v8_classes; clp != NULL; clp = clp->v8c_next) {
-		if (strcmp(buf, clp->v8c_name) == 0)
+		if (strcmp(rqclass, clp->v8c_name) == 0)
 			break;
 	}
 
