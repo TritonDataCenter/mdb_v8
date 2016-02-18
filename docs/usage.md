@@ -571,9 +571,12 @@ Option summary:
 
     addr::jsclosure
 
-Given a function identified by `addr`, print out the closure variables that are
-visible to that function.  You may find `addr` from the stack, from the output
-of the `jsfunctions` command, or as a property of some other object.
+Given a function instance identified by the address `addr`, print out the
+closure variables that are visible to that function.  You may find `addr` from
+the stack, from the output of the `jsfunctions` command, or as a property of
+some other object. See the FAQ entry entitled ["How to find the address of a
+function instance?"](#how-to-find-the-address-of-a-function-instance) for more
+details on how to find that address.
 
 As an example, here's some example code from the file `events.js` in Node v0.10:
 
@@ -692,11 +695,15 @@ important to realize that it's not JSON.  Particularly:
 * Arrays may include hidden `hole` values that V8 uses to distinguish between
   elements that have been set to `undefined` vs. elements that have never been
   set.
-* Functions are printed with a summary that describes them by name, but isn't
-  valid JSON or JavaScript.  For example:
+* Function instances are printed with a summary that describes them by name,
+  but isn't valid JSON or JavaScript.  For example:
 
       > 9bf36465::jsprint
       function <anonymous> (as Socket.write)
+
+  See the FAQ entry entitled ["How to find the address of a function instance
+  ?"](#how-to-find-the-address-of-a-function-instance) for more details on how
+  to find functions' addresses.
 
 If `member` is specified, then only the `member` property of the object is
 printed.  This is particularly useful in pipelines where you've used
@@ -769,10 +776,15 @@ the address of the value you're looking for, which is what you'd get with
 
     addr::jssource [-n numlines]
 
-Given a JavaScript function identified by `addr`, print the source code for that
-function with `numlines` of surrounding context.  `numlines` defaults to 5.  You
-can combine this with `jsfunctions` to find the source code for any JavaScript
-function in your program, including functions built into Node.js:
+Given a JavaScript function instance identified by the address `addr`, print
+the source code for that function with `numlines` of surrounding context. See
+the FAQ entry entitled ["How to find the address of a function instance
+?"](#how-to-find-the-address-of-a-function-instance) for more details on how
+to find the function's address.
+
+`numlines` defaults to 5.  You can combine this with `jsfunctions` to find the
+source code for any JavaScript function in your program, including functions
+built into Node.js:
 
     > ::jsfunctions -s url.js -n Url.parseHost
         FUNC   #FUNCS NAME                                     FROM
@@ -871,7 +883,10 @@ Walking V8 structures:
 * v8array: given a V8 FixedArray, print the elements of the array
 * v8code: print details about a V8 Code object (including disassembly)
 * v8context: print information about a V8 Context object
-* v8function: print details about a V8 function object (including disassembly)
+* v8function: print details about a V8 function object (including
+  disassembly). See the FAQ entry entitled ["How to find the address of a
+  function instance?"](#how-to-find-the-address-of-a-function-instance) for
+  more details on that.
 * v8internal: fetch internal fields from heap objects
 * v8load: manually load configuration for Node v0.4 or v0.6
 * v8print: print a C++ object that's part of V8's heap
@@ -902,7 +917,6 @@ the file. In "vim", you can find this with :goto 13546. Beware that Node
 prepends about 50 characters to all files before passing them to V8, so these
 position numbers appear to be off by about that much.
 
-
 #### I keep seeing `hole` in ::jsprint output.  What's up with that?
 
 In ::jsprint output, you may see values called "hole". You can think of "hole"
@@ -913,6 +927,213 @@ JavaScript requires that V8 be able to distinguish between array elements that
 have not been assigned a value and those that have been assigned "undefined".
 V8 uses the special "hole" value for this internally.
 
+#### How to find the address of a function instance?
+
+The address of a function instance is the address of a `JSFunction` object,
+not the address of the stack frame used to store the data associated to a
+specific call of that function, or the address of the function's code.
+
+Getting the address of a function instance is useful e.g to get access to its
+closure with the `::jsclosure` command.
+
+##### From the output of `::jsfunctions`
+
+`::jsfunctions`' output displays the appropriate address on its first column:
+
+```
+> ::jsfunctions
+    FUNC   #FUNCS NAME                                     FROM
+fe843a01        1 <anonymous> (as Module.requireRepl)      module.js position 14781
+```
+
+`fe843a01` is a valid `JSFunction` instance's address:
+
+```
+> fe843a01::jsclosure
+    "NativeModule": 9094c625: function NativeModule
+    "runInThisContext": fe8394b9: function <anonymous> (as <anon>)
+    "runInNewContext": fe839591: function <anonymous> (as <anon>)
+    "assert": 909349dd: function ok
+    "hasOwnProperty": 90934b21: function hasOwnProperty
+    "Module": 90947c95: function Module
+    "modulePaths": 90934cc1: [
+        9093dbd5: "/usr/node_modules",
+        9093dbe9: "/usr/vm/node_modules",
+        aac2e149: "/opt/smartdc/agents/lib/node_modules/vm-agent/node/lib/node",
+    ]
+    "path": 90947e0d: {
+        "sep": 85b16189: "/",
+        "delimiter": 85b19f61: ":",
+    }
+    "debug": fe8437a5: function <anonymous> (as Module._debug)
+    "statPath": 90934995: function statPath
+    "packageMainCache": 90934cd1: {
+        "/opt/smartdc/agents/lib/node_modules/vm-agent/node_modules/bunyan/node_modules/dtrace-provider": aac2e259: "./dtrace-provider.js",
+        "/opt/smartdc/agents/lib/node_modules/vm-agent/node_modules/bunyan": aac2e2c9: "./lib/bunyan.js",
+        "/opt/smartdc/agents/lib/node_modules/vm-agent/node_modules/restify-clients/node_modules/restify-errors/node_modules/verror/node_modules/extsprintf": 9c44fe81: "./lib/extsprintf.js",
+        "/opt/smartdc/agents/lib/node_modules/vm-agent/node_modules/vmadm": aac8e8b9: "lib/index.js",
+        "/opt/smartdc/agents/lib/node_modules/vm-agent/node_modules/vasync/node_modules/verror": aac63181: "./lib/verror.js",
+        "/opt/smartdc/agents/lib/node_modules/vm-agent/node_modules/restify-clients/node_modules/once": 9c43f311: "once.js",
+        "/opt/smartdc/agents/lib/node_modules/vm-agent/node_modules/restify-clients/node_modules/backoff": fe808091: undefined,
+        "/opt/smartdc/agents/lib/node_modules/vm-agent/node_modules/r
+    "readPackage": 90934afd: function readPackage
+    "tryPackage": 90934971: function tryPackage
+    "tryFile": 90934929: function tryFile
+    "tryExtensions": 9093494d: function tryExtensions
+    "resolvedArgv": fe808091: undefined
+    "stripBOM": 90934a25: function stripBOM
+>
+```
+
+##### As a property of some other object
+
+To find the `JSFunction` instance's address of a function that is the value of
+some object's property, use the `-a` command line switch of the `::jsprint`
+command.
+
+For instance, let's display the latest function of the functions that are set
+as a property named `callback` on some objects:
+
+```
+> ::findjsobjects -p callback | ::findjsobjects | ::jsprint ! tail -1
+function <anonymous> (as <anon>)
+```
+
+By default, no address is displayed. Now let's use the `-a` command line
+switch of the `::jsprint` command:
+
+
+```
+> ::findjsobjects -p callback | ::findjsobjects | ::jsprint -a callback ! tail -1
+86030809: function <anonymous> (as <anon>)
+>
+```
+
+The address on the left is the `JSFunction` instance's address we're looking
+for:
+
+```
+> 86030809::jsclosure
+    "state": 9c2baf5d: {
+        "highWaterMark": 8000: 16384,
+        "buffer": 9c2bd3c5: [...],
+        "length": 0: 0,
+        "pipes": 9c2b102d: [...],
+        "pipesCount": 2: 1,
+        "flowing": fe8080b1: true,
+        "ended": fe8080c1: false,
+        "endEmitted": fe8080c1: false,
+        "reading": fe8080b1: true,
+        "calledRead": fe8080b1: true,
+        "sync": fe8080c1: false,
+        "needReadable": fe8080b1: true,
+        "emittedReadable": fe8080c1: false,
+        "readableListening": fe8080b1: true,
+        "objectMode": fe8080c1: false,
+        "defaultEncoding": 85b1528d: "utf8",
+        "ranOut": fe8080b1: true,
+        "awaitDrain": 0: 0,
+        "readingMore": fe8080c1: false,
+        "decoder": fe808081: null,
+        "encoding": fe808081: null,
+    }
+// Output truncated
+```
+
+##### From the output of `::jsstack`
+
+To get the address of a `JSFunction` instance that corresponds to a given
+stack frame, use the `-a` command line switch for the `::jsstack` command as
+follows:
+
+```
+> ::jsstack -a
+80475c8 libc.so.1`_lwp_kill+0x15
+80475e8 libc.so.1`raise+0x2b
+8047638 libc.so.1`abort+0x10e
+        (1 internal frame elided)
+80476e8 v8::internal::Isolate::DoThrow+0x2bb
+8047708 v8::internal::Isolate::Throw+0x1f
+8047748 v8::internal::Runtime_Throw+0x3e
+8047764 0xaa70a376 internal (Code: aa70a301)
+8047778 0xbf964e8c fail (JSFunction: 909371e1)
+80477a4 0xaa74b63e ok (JSFunction: 909349dd)
+80477c4 0xbf964c85 _handleLoadErr (JSFunction: 86c488a5)
+80477f4 0x9274eec9 _onVmLoad (JSFunction: 86c48965)
+8047814 0xaa70e501 <ArgumentsAdaptorFrame>
+8047838 0x9274e989 <anonymous> (as <anon>) (JSFunction: 86c48abd)
+8047868 0x92730a7d _childCloseHandler (JSFunction: 86c49e39)
+80478a0 0xbc07143f <anonymous> (as EventEmitter.emit) (JSFunction: fe83a385)
+80478bc 0xaa70e501 <ArgumentsAdaptorFrame>
+80478e0 0x927a552f maybeClose (JSFunction: 90939b7d)
+80478fc 0xbc079eb1 <anonymous> (as <anon>) (JSFunction: 86c49bc1)
+8047914 0xaa70e501 <ArgumentsAdaptorFrame>
+8047948 0xbc071403 <anonymous> (as EventEmitter.emit) (JSFunction: fe83a385)
+8047964 0xaa70e501 <ArgumentsAdaptorFrame>
+8047980 0xbc079e10 <anonymous> (as <anon>) (JSFunction: 8693ff69)
+804799c 0xaa721899 <InternalFrame>
+80479d8 0xaa71308a <EntryFrame>
+8047a58 _ZN2v88internalL6InvokeEbNS0_6HandleINS0_10JSFunctionEEENS1_INS0_6ObjectEEEiPS5_Pb+0x101
+8047a98 v8::internal::Execution::Call+0xc9
+8047af8 v8::Function::Call+0x10b
+8047b68 node::MakeCallback+0x5e
+8047bc8 node::MakeCallback+0x66
+8047c18 node::HandleWrap::OnClose+0x8f
+8047c58 uv_run+0x154
+8047cb8 node::Start+0x16d
+8047cd8 main+0x1b
+8047cfc _start+0x83
+```
+
+In the output above, let's consider the call to the `_onVmLoad` function:
+
+```
+80477f4 0x9274eec9 _onVmLoad (JSFunction: 86c48965)
+```
+
+We can find three different addresses:
+
+1. The address of the stack frame on the left: `80477f4`.
+2. The address of the function's code second on the left: `0x9274eec9`.
+3. The address of the `JSFunction` instance for this function call on the
+right: `86c48965`.
+
+The third address on the right is the one to use with `::jsclosure`:
+
+```
+> 86c48965::jsclosure
+    "cb": 86c48859: function <anonymous> (as next)
+    "stash": 86c48671: {}
+    "startLoad": 86c48959: 1454543447282
+    "_handleLoadErr": 86c488a5: function _handleLoadErr
+>
+```
+
+##### From `::jsclosure`'s output
+
+`::jsclosure` itself can display closure variables that are function
+instances:
+
+```
+> 86c48965::jsclosure
+    "cb": 86c48859: function <anonymous> (as next)
+    "stash": 86c48671: {}
+    "startLoad": 86c48959: 1454543447282
+    "_handleLoadErr": 86c488a5: function _handleLoadErr
+>
+```
+
+In the output above, `_handleLoadErr` is a function, and the `JSFunction`
+instance's address is the only address displayed by default by `::jscolosure`:
+
+```
+> 86c488a5::jsclosure
+    "cb": 86c48859: function <anonymous> (as next)
+    "stash": 86c48671: {}
+    "startLoad": 86c48959: 1454543447282
+    "_handleLoadErr": 86c488a5: function _handleLoadErr
+>
+```
 ### Other MDB commands useful for Node programmers
 
 Getting help:
