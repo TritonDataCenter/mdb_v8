@@ -8,22 +8,19 @@
  * Copyright (c) 2015, Joyent, Inc.
  */
 
-var common = require('./common');
+
 var assert = require('assert');
 var os = require('os');
 var path = require('path');
 var util = require('util');
 
-var NODE_VERSIONS = process.versions.node.split('.');
-var NODE_MAJOR = Number(NODE_VERSIONS[0]);
-assert.equal(isNaN(NODE_MAJOR), false);
+var bufferCommands = require('../lib/buffer-commands');
+var common = require('./common');
+var getRuntimeVersions = require('../lib/runtime-versions').getRuntimeVersions;
 
-var V8_VERSIONS = process.versions.v8.split('.');
-var V8_MAJOR = Number(V8_VERSIONS[0]);
-assert.equal(isNaN(V8_MAJOR), false);
-
-var V8_MINOR = Number(V8_VERSIONS[1]);
-assert.equal(isNaN(V8_MINOR), false);
+var RUNTIME_VERSIONS = getRuntimeVersions();
+var V8_VERSION = RUNTIME_VERSIONS.V8;
+var NODE_VERSION = RUNTIME_VERSIONS.node;
 
 /*
  * We're going to look specifically for this function and buffer in the core
@@ -35,7 +32,7 @@ function myTestFunction()
 	return (new Buffer(bufstr));
 }
 
-var bufstr, mybuffer;
+var bufstr, mybuffer, slicedBuffer, slicedBufferLength;
 
 /*
  * Run myTestFunction() three times to create multiple instances of
@@ -46,6 +43,10 @@ mybuffer = myTestFunction(bufstr);
 mybuffer = myTestFunction(bufstr);
 mybuffer = myTestFunction(bufstr);
 mybuffer.my_buffer = true;
+
+slicedBufferLength = 5;
+slicedBuffer = mybuffer.slice(0, slicedBufferLength);
+slicedBuffer.is_sliced_buffer = true;
 
 var OBJECT_KINDS = ['dict', 'inobject', 'numeric', 'props'];
 
@@ -126,9 +127,9 @@ gcore.on('exit', function (code) {
 	});
 
 	var verifiers = [];
-	var buffer;
+	var bufferAddress, slicedBufferAddress;
 	verifiers.push(function verifyConstructor(testlines) {
-		if (NODE_MAJOR < 4) {
+		if (NODE_VERSION.major < 4) {
 			assert.deepEqual(testlines, [ 'Buffer' ]);
 		} else {
 			assert.deepEqual(testlines, [ 'Uint8Array' ]);
@@ -137,11 +138,12 @@ gcore.on('exit', function (code) {
 	verifiers.push(function verifyNodebuffer(testlines) {
 		assert.equal(testlines.length, 1);
 		assert.ok(/^[0-9a-fA-F]+$/.test(testlines[0]));
-		buffer = testlines[0];
+		bufferAddress = testlines[0];
 	});
 	verifiers.push(function verifyBufferContents(testlines) {
 		assert.equal(testlines.length, 1);
-		assert.equal(testlines[0], '0x' + buffer + ':      Hello');
+		assert.equal(testlines[0], '0x' + bufferAddress +
+			':      Hello');
 	});
 	// Buffer instances are implemented as typed arrays in Node
 	// versions that ship with V8 >= 4.6. Typed arrays in these versions
@@ -149,11 +151,46 @@ gcore.on('exit', function (code) {
 	// "internal" element, so ::v8internal would not output its address.
 	// It would instead output the address of a FixedTypedArrayBase
 	// instance. Thus, skip the test.
-	if (V8_MAJOR < 4 || V8_MAJOR === 4 && V8_MINOR < 6) {
+	if (V8_VERSION.major < 4 || V8_VERSION.major === 4 &&
+		V8_VERSION.minor < 6) {
 		verifiers.push(function verifyV8internal(testlines) {
-			assert.deepEqual(testlines, [ buffer ]);
+			assert.deepEqual(testlines, [ bufferAddress ]);
 		});
 	}
+	verifiers.push(function verifySlicedBufferConstructor(testlines) {
+		if (NODE_VERSION.major >= 4) {
+			assert.deepEqual(testlines, [ 'Uint8Array' ]);
+		} else if (NODE_VERSION.major === 0 &&
+			NODE_VERSION.minor === 12) {
+			assert.deepEqual(testlines, [ 'NativeBuffer' ]);
+		} else {
+			assert.deepEqual(testlines, [ 'Buffer' ]);
+		}
+	});
+	verifiers.push(function verifySlicedNodebuffer(testlines) {
+		assert.equal(testlines.length, 1);
+		assert.ok(/^[0-9a-fA-F]+$/.test(testlines[0]));
+		slicedBufferAddress = testlines[0];
+	});
+	verifiers.push(function verifySlicedBufferContents(testlines) {
+		assert.equal(testlines.length, 1);
+		assert.equal(testlines[0], '0x' + slicedBufferAddress +
+			':      Hello');
+	});
+
+	// Buffer instances are implemented as typed arrays in Node
+	// versions that ship with V8 >= 4.6. Typed arrays in these versions
+	// of V8 do not *directly* store their underlying buffer as an
+	// "internal" element, so ::v8internal would not output its address.
+	// It would instead output the address of a FixedTypedArrayBase
+	// instance. Thus, skip the test.
+	if (V8_VERSION.major < 4 || V8_VERSION.major === 4 &&
+		V8_VERSION.minor < 6) {
+		verifiers.push(function verifySliceBufferV8internal(testlines) {
+			assert.deepEqual(testlines, [ slicedBufferAddress ]);
+		});
+	}
+
 	verifiers.push(function verifyJsfunctionN(testlines) {
 		assert.equal(testlines.length, 2);
 		var parts = testlines[1].trim().split(/\s+/);
@@ -208,19 +245,11 @@ gcore.on('exit', function (code) {
 	var mod = util.format('::load %s\n', common.dmodpath());
 	mdb.stdin.write(mod);
 	mdb.stdin.write('!echo test: jsconstructor\n');
-	// Starting from node v4.0, buffers are actually Uint8Array instances,
-	// and they don't have a "length" property
-	if (NODE_MAJOR < 4) {
-		mdb.stdin.write('::findjsobjects -p my_buffer | ' +
-		'::findjsobjects | ' + '::jsprint -b length ! ' +
-		'awk -F: \'$2 == ' + bufstr.length +
-	    '{ print $1 }\'' + '| head -1 > ' + tmpfile + '\n');
-	} else {
-		mdb.stdin.write('::findjsobjects -p my_buffer | ' +
-		'::findjsobjects | ' + '::jsprint -b ! ' +
-	    'awk -F: \'index($2, "length ' + bufstr.length + '>") > 0 ' +
-	    '{ print $1 }\'' + '| head -1 > ' + tmpfile + '\n');
-	}
+	mdb.stdin.write(bufferCommands.getFindBufferAddressCmd({
+		propertyName: 'my_buffer',
+		length: bufstr.length,
+		outputFile: tmpfile
+	}));
 	mdb.stdin.write('::cat ' + tmpfile + ' | ::jsconstructor\n');
 	mdb.stdin.write('!echo test: nodebuffer\n');
 	mdb.stdin.write('::cat ' + tmpfile + ' | ::nodebuffer\n');
@@ -234,13 +263,44 @@ gcore.on('exit', function (code) {
 	// "internal" element, so ::v8internal would not output its address.
 	// It would instead output the address of a FixedTypedArrayBase
 	// instance. Thus, skip the test.
-	if (V8_MAJOR < 4 || V8_MAJOR === 4 && V8_MINOR < 6) {
+	if (V8_VERSION.major < 4 || V8_VERSION.major === 4 &&
+		V8_VERSION.minor < 6) {
 		mdb.stdin.write('!echo test: v8internal\n');
 		mdb.stdin.write('::cat ' + tmpfile +
 		    ' | ::v8print ! awk \'$2 == "elements"{' +
 		    'print $4 }\' > ' + tmpfile + '\n');
 		mdb.stdin.write('::cat ' + tmpfile + ' | ::v8internal 0\n');
 	}
+	// Tests that sliced buffers can be inspected properly. See related
+	// issue: https://github.com/joyent/mdb_v8/issues/58.
+	mdb.stdin.write('!echo test: sliced buffer\n');
+	mdb.stdin.write(bufferCommands.getFindBufferAddressCmd({
+		propertyName: 'is_sliced_buffer',
+		length: slicedBufferLength,
+		outputFile: tmpfile
+	}));
+	mdb.stdin.write('::cat ' + tmpfile + ' | ::jsconstructor\n');
+	mdb.stdin.write('!echo test: sliced nodebuffer\n');
+	mdb.stdin.write('::cat ' + tmpfile + ' | ::nodebuffer\n');
+	mdb.stdin.write('!echo test: sliced nodebuffer contents\n');
+	mdb.stdin.write('::cat ' + tmpfile +
+	    ' | ::nodebuffer | ::eval "./ccccc"\n');
+
+	// Buffer instances are implemented as typed arrays in Node
+	// versions that ship with V8 >= 4.6. Typed arrays in these versions
+	// of V8 do not *directly* store their underlying buffer as an
+	// "internal" element, so ::v8internal would not output its address.
+	// It would instead output the address of a FixedTypedArrayBase
+	// instance. Thus, skip the test.
+	if (V8_VERSION.major < 4 || V8_VERSION.major === 4 &&
+		V8_VERSION.minor < 6) {
+		mdb.stdin.write('!echo test: v8internal\n');
+		mdb.stdin.write('::cat ' + tmpfile +
+		    ' | ::v8print ! awk \'$2 == "elements"{' +
+		    'print $4 }\' > ' + tmpfile + '\n');
+		mdb.stdin.write('::cat ' + tmpfile + ' | ::v8internal 0\n');
+	}
+
 	mdb.stdin.write('!echo test: jsfunctions -n\n');
 	mdb.stdin.write('::jsfunctions -n myTestFunction ! cat\n');
 	mdb.stdin.write('!echo test: jsfunctions -s\n');
