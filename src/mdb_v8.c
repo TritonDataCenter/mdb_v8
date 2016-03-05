@@ -5128,6 +5128,7 @@ dcmd_nodebuffer(uintptr_t addr, uint_t flags, int argc,
 			return (DCMD_ERR);
 
 		if (strcmp(buf, "Buffer") != 0 &&
+		    strcmp(buf, "NativeBuffer") != 0 &&
 		    strcmp(buf, "Uint8Array") != 0) {
 			mdb_warn("%p does not appear to be a buffer\n", addr);
 			return (DCMD_ERR);
@@ -5135,17 +5136,19 @@ dcmd_nodebuffer(uintptr_t addr, uint_t flags, int argc,
 	}
 
 	if (strcmp(buf, "Buffer") == 0 ||
+	    strcmp(buf, "NativeBuffer") == 0 ||
 	    V8_OFF_JSARRAYBUFFER_BACKINGSTORE == -1) {
 		/*
-		 * This works for Buffer instances in node < 4.0 because they
-		 * use elements slots to reference the backing storage. If
-		 * the constructor name is not "Buffer" but "Uint8Array" and
+		 * This works for Buffer and NativeBuffer instances in node <
+		 * 4.0 because they use elements slots to reference the backing
+		 * storage. If the constructor name is not "Buffer" or
+		 * "NativeBuffer" but "Uint8Array" and
 		 * V8_OFF_JSARRAYBUFFER_BACKINGSTORE == -1, it means we are in
-		 * the range of node versions >= 4.0 and <= 4.1 that ship with
-		 * V8 4.5.x. For these versions, it also works because Buffer
-		 * instances are actually typed arrays but their backing storage
-		 * an ExternalUint8Arrayelements whose address is stored in the
-		 * first element's slot.
+		 * the range of node versions >= 4.0 and <= 4.1 that ship
+		 * with V8 4.5.x. For these versions, it also works because
+		 * Buffer instances are actually typed arrays but their backing
+		 * storage is an ExternalUint8Arrayelements whose address is
+		 * stored in the first element's slot.
 		 */
 		if (read_heap_ptr(&elts, addr, V8_OFF_JSOBJECT_ELEMENTS) != 0)
 			return (DCMD_ERR);
