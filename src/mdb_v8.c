@@ -5,7 +5,7 @@
  */
 
 /*
- * Copyright (c) 2015, Joyent, Inc.
+ * Copyright (c) 2016, Joyent, Inc.
  */
 
 /*
@@ -15,9 +15,9 @@
  * that predate this metadata.  See mdb_v8_cfg.c for details.
  *
  * NOTE: This dmod implementation (including this file and related headers and C
- * files) exist in the mdb_v8, Node.js, and SmartOS source trees.  THESE SHOULD
- * BE KEPT IN SYNC.  Note that these files have different licenses to match
- * their corresponding repositories.
+ * files) have existed in the mdb_v8, Node.js, and SmartOS source trees.  The
+ * copy in the mdb_v8 repository is the canonical source.  For details, see that
+ * repository.
  */
 
 #include "mdb_v8_impl.h"
@@ -151,6 +151,7 @@ intptr_t V8_TYPE_JSFUNCTION = -1;
 intptr_t V8_TYPE_JSDATE = -1;
 intptr_t V8_TYPE_JSREGEXP = -1;
 intptr_t V8_TYPE_HEAPNUMBER = -1;
+intptr_t V8_TYPE_MUTABLEHEAPNUMBER = -1;
 intptr_t V8_TYPE_ODDBALL = -1;
 intptr_t V8_TYPE_FIXEDARRAY = -1;
 intptr_t V8_TYPE_MAP = -1;
@@ -201,6 +202,7 @@ ssize_t V8_OFF_MAP_INOBJECT_PROPERTIES_OR_CTOR_FUN_INDEX;
 ssize_t V8_OFF_MAP_INSTANCE_ATTRIBUTES;
 ssize_t V8_OFF_MAP_INSTANCE_DESCRIPTORS;
 ssize_t V8_OFF_MAP_INSTANCE_SIZE;
+ssize_t V8_OFF_MAP_LAYOUT_DESCRIPTOR;
 ssize_t V8_OFF_MAP_BIT_FIELD;
 ssize_t V8_OFF_MAP_BIT_FIELD2;
 ssize_t V8_OFF_MAP_BIT_FIELD3;
@@ -439,6 +441,8 @@ static v8_offset_t v8_offsets[] = {
 	    "Map", "instance_attributes" },
 	{ &V8_OFF_MAP_INSTANCE_DESCRIPTORS,
 	    "Map", "instance_descriptors", B_TRUE },
+	{ &V8_OFF_MAP_LAYOUT_DESCRIPTOR,
+	    "Map", "layout_descriptor", B_TRUE },
 	{ &V8_OFF_MAP_TRANSITIONS,
 	    "Map", "transitions", B_TRUE },
 	{ &V8_OFF_MAP_INSTANCE_SIZE,
@@ -597,6 +601,37 @@ static int jsobj_print_jsfunction(uintptr_t, jsobj_print_t *);
 static int jsobj_print_jsdate(uintptr_t, jsobj_print_t *);
 static int jsobj_print_jsregexp(uintptr_t, jsobj_print_t *);
 
+
+/*
+ * Layout descriptors: see jsobj_layout_load() for details.
+ */
+
+typedef enum {
+	JL_F_HASLAYOUT	= 0x1,	/* map has any layout descriptor */
+	JL_F_ALLTAGGED	= 0x2,	/* no properties are untagged */
+	JL_F_ARRAY	= 0x4,	/* layout descriptors larger than SMI */
+} jsobj_layout_flags_t;
+
+/*
+ * A layout descriptor is a bit vector with one bit per object property, grouped
+ * into 32-bit "words" (even on LP64).  It's more straightforward to support a
+ * small number of these words, and even with only 8 words supported, we can
+ * access objects having 256 properties.  With that many properties, it's likely
+ * V8 will have converted the object to dictionary-mode by that point, in which
+ * case this appears not to be relevant.
+ */
+#define	JL_MAXBITVECS 8
+
+typedef struct {
+	jsobj_layout_flags_t	jl_flags;
+	uintptr_t		jl_descriptor;
+	size_t			jl_length;
+	uint32_t		jl_bitvecs[JL_MAXBITVECS];
+} jsobj_layout_t;
+
+static int jsobj_layout_load(jsobj_layout_t *, uintptr_t);
+static boolean_t jsobj_layout_untagged(jsobj_layout_t *, uintptr_t);
+
 /*
  * Returns 1 if the V8 version v8_major.v8.minor is strictly older than
  * the V8 version represented by "flags".
@@ -619,6 +654,20 @@ v8_version_at_least(uintptr_t v8_major, uintptr_t v8_minor, uint32_t flags) {
 	return (v8_major > V8_CONSTANT_MAJOR(flags) ||
 	    (v8_major == V8_CONSTANT_MAJOR(flags) &&
 	    v8_minor >= V8_CONSTANT_MINOR(flags)));
+}
+
+/*
+ * Returns true if the version of V8 inside this process or core file is older
+ * than the specified version.
+ */
+static boolean_t
+v8_version_current_older(uintptr_t major, uintptr_t minor, uintptr_t build,
+    uintptr_t patch)
+{
+	return (v8_major < major || (v8_major == major &&
+	    (v8_minor < minor || (v8_minor == minor &&
+	    (v8_build < build || (v8_build == build &&
+	    v8_patch < patch))))));
 }
 
 /*
@@ -729,6 +778,9 @@ autoconfigure(v8_cfg_t *cfgp)
 		if (strcmp(ep->v8e_name, "HeapNumber") == 0)
 			V8_TYPE_HEAPNUMBER = ep->v8e_value;
 
+		if (strcmp(ep->v8e_name, "MutableHeapNumber") == 0)
+			V8_TYPE_MUTABLEHEAPNUMBER = ep->v8e_value;
+
 		if (strcmp(ep->v8e_name, "JSDate") == 0)
 			V8_TYPE_JSDATE = ep->v8e_value;
 
@@ -782,6 +834,36 @@ autoconfigure(v8_cfg_t *cfgp)
 
 	if (V8_TYPE_ODDBALL == -1)
 		mdb_warn("couldn't find Oddball type\n");
+
+	/*
+	 * The MutableHeapNumber type was added in the V8 delivered with Node
+	 * v4.  It functions just like HeapNumber.  However, because there is no
+	 * separate MutableHeapNumber class, the postmortem metadata generation
+	 * script does not emit a type for MutableHeapNumber, so we have to
+	 * infer it.  In the version delivered with Node 4, at least the
+	 * MutableHeapNumber type is assigned directly after HeapNumber's.
+	 * By V8 version 4.6.85.23 (and possibly earlier), this type value
+	 * changed to appear directly after the type for CODE.  Clearly, we'll
+	 * need a better way to reliably obtain this value.
+	 */
+	if (V8_TYPE_HEAPNUMBER != -1 && V8_TYPE_MUTABLEHEAPNUMBER == -1) {
+		if (v8_version_current_older(4, 6, 85, 23)) {
+			V8_TYPE_MUTABLEHEAPNUMBER = V8_TYPE_HEAPNUMBER + 1;
+		} else {
+			for (ep = v8_types; ep->v8e_name[0] != '\0'; ep++) {
+				if (strcmp(ep->v8e_name, "Code") == 0) {
+					break;
+				}
+			}
+
+			if (ep->v8e_name[0] != '\0') {
+				V8_TYPE_MUTABLEHEAPNUMBER = ep->v8e_value + 1;
+			} else {
+				mdb_warn("couldn't find type for "
+				    "MutableHeapNumber\n");
+			}
+		}
+	}
 
 	/*
 	 * Finally, load various class offsets.
@@ -1332,6 +1414,78 @@ conf_field_lookup(const char *klass, const char *field)
 }
 
 /*
+ * Property values
+ *
+ * In V8, JavaScript values are represented using word-sized native values.
+ * The native value may represent a small integer, in which case the integer
+ * value is encoded directly in the native value; or it may represent some other
+ * kind of JavaScript value, in which case the native value encodes a pointer to
+ * a more complex structure describing the value.  You can tell whether a native
+ * value represents a small integer or a pointer to something else by looking at
+ * the low bits of the native value.  These bits are called the _tag_, and
+ * JavaScript values encoded this way are called _tagged_ objects.
+ *
+ * Until the V8 version used in Node v4, all JavaScript values were tagged in
+ * this way.  As a result, most interfaces in mdb_v8 that operate on JavaScript
+ * values of any kind historically used a "uintptr_t" to refer to arbitrary
+ * program values.  That was sufficient because an interface could always figure
+ * out from the tag what kind of value it was looking at, no matter where the
+ * value came from.
+ *
+ * As of Node v4, V8 uses a feature called unboxed doubles, where in some cases,
+ * rather than wrapping a double-precision floating-point value in a HeapNumber
+ * class and then referencing it using a tagged pointer to the HeapNumber, V8
+ * instead writes the raw double value directly where it would have written the
+ * (tagged) pointer to the HeapNumber.  Such values are called _untagged_
+ * because the low bits (the tag bits) are not meaningful.  In order to
+ * interpret such values, the caller *must* know already whether it's looking at
+ * a tagged value or an unboxed double, since a double can have any bit pattern
+ * in the tag bits.
+ *
+ * There are more details about this in the comment above jsobj_layout_load().
+ * Suffice it here to say that this optimization is only known to be used when a
+ * value is used as an object property.  As a result, property values cannot be
+ * represented with a uintptr_t, but need a combination of uintptr_t and a bit
+ * indicating whether the uintptr actually contains an unboxed double.
+ *
+ * Because this interface change is pretty recent, we've done this in a way that
+ * minimizes the change to existing internal interfaces, although the result is
+ * something of a kludge.  These interfaces need some refactoring to look more
+ * like the interfaces in mdb_v8_dbg.h.
+ */
+typedef struct {
+	boolean_t v8v_isboxeddouble;
+	union {
+		double		v8vu_double;
+		uintptr_t	v8vu_addr;
+	} v8v_u;
+} v8propvalue_t;
+
+/*
+ * Initialize a v8propvalue_t to represent a tagged value represented by "addr".
+ */
+static void
+jsobj_propvalue_addr(v8propvalue_t *valp, uintptr_t addr)
+{
+	bzero(valp, sizeof (*valp));
+	valp->v8v_isboxeddouble = B_FALSE;
+	valp->v8v_u.v8vu_addr = addr;
+}
+
+/*
+ * Initialize a v8propvalue_t to represent an untagged, unboxed double value
+ * represented by "d".
+ */
+static void
+jsobj_propvalue_double(v8propvalue_t *valp, double d)
+{
+	bzero(valp, sizeof (*valp));
+	valp->v8v_isboxeddouble = B_TRUE;
+	valp->v8v_u.v8vu_double = d;
+}
+
+
+/*
  * Returns in "offp" the offset of field "field" in C++ class "klass".
  */
 static int
@@ -1548,7 +1702,7 @@ read_size(size_t *valp, uintptr_t addr)
  */
 static int
 read_heap_dict(uintptr_t addr,
-    int (*func)(const char *, uintptr_t, void *), void *arg,
+    int (*func)(const char *, v8propvalue_t *, void *), void *arg,
     jspropinfo_t *propinfo)
 {
 	uint8_t type;
@@ -1557,6 +1711,7 @@ read_heap_dict(uintptr_t addr,
 	char *bufp;
 	int rval = -1;
 	uintptr_t *dict, ndict, i;
+	v8propvalue_t value;
 
 	if (read_heap_array(addr, &dict, &ndict, UM_SLEEP) != 0)
 		return (-1);
@@ -1604,7 +1759,8 @@ read_heap_dict(uintptr_t addr,
 		if (propinfo != NULL && jsobj_maybe_garbage(dict[i + 1]))
 			*propinfo |= JPI_BADPROPS;
 
-		if (func(buf, dict[i + 1], arg) == -1)
+		jsobj_propvalue_addr(&value, dict[i + 1]);
+		if (func(buf, &value, arg) == -1)
 			goto out;
 	}
 
@@ -1613,6 +1769,23 @@ out:
 	mdb_free(dict, ndict * sizeof (uintptr_t));
 
 	return (rval);
+}
+
+/*
+ * Given a uintptr_t whose contents represent a double, convert it to a double.
+ * This should only be used in an LP64 context.  See jsobj_layout_load() for
+ * details.
+ */
+static double
+makedouble(uintptr_t ptr)
+{
+	union {
+		double d;
+		uintptr_t p;
+	} u;
+
+	u.p = ptr;
+	return (u.d);
 }
 
 /*
@@ -2036,6 +2209,7 @@ jsobj_maybe_garbage(uintptr_t addr)
 	    type != V8_TYPE_ACCESSORPAIR &&
 	    type != V8_TYPE_EXECUTABLEACCESSORINFO &&
 	    type != V8_TYPE_HEAPNUMBER &&
+	    type != V8_TYPE_MUTABLEHEAPNUMBER &&
 	    type != V8_TYPE_ODDBALL &&
 	    type != V8_TYPE_JSOBJECT &&
 	    type != V8_TYPE_JSARRAY &&
@@ -2163,7 +2337,7 @@ jsobj_maybe_garbage(uintptr_t addr)
 
 static int
 jsobj_properties(uintptr_t addr,
-    int (*func)(const char *, uintptr_t, void *), void *arg,
+    int (*func)(const char *, v8propvalue_t *, void *), void *arg,
     jspropinfo_t *propinfop)
 {
 	uintptr_t ptr, map, elements;
@@ -2175,6 +2349,9 @@ jsobj_properties(uintptr_t addr,
 	size_t ps = sizeof (uintptr_t);
 	ssize_t off;
 	jspropinfo_t propinfo = JPI_NONE;
+	jsobj_layout_t layout;
+	v8propvalue_t value;
+	boolean_t untagged;
 
 	/*
 	 * First, check if the JSObject's "properties" field is a FixedArray.
@@ -2248,7 +2425,8 @@ jsobj_properties(uintptr_t addr,
 				if (jsobj_maybe_garbage(elts[ii]))
 					propinfo |= JPI_BADPROPS;
 
-				if (func(name, elts[ii], arg) != 0) {
+				jsobj_propvalue_addr(&value, elts[ii]);
+				if (func(name, &value, arg) != 0) {
 					mdb_free(elts, sz);
 					goto err;
 				}
@@ -2413,6 +2591,13 @@ jsobj_properties(uintptr_t addr,
 		rndescs = ndescs - V8_PROP_IDX_FIRST;
 		propinfo |= JPI_HASCONTENT;
 	}
+
+	/*
+	 * The last thing we need to work out is whether each property is stored
+	 * as an untagged value or not.
+	 */
+	if (jsobj_layout_load(&layout, map) == -1)
+		goto err;
 
 	/*
 	 * At this point, we've read all the pieces we need to process the list
@@ -2587,10 +2772,16 @@ jsobj_properties(uintptr_t addr,
 		 * If the property value doesn't look like a valid JavaScript
 		 * object, mark this object as dubious.
 		 */
-		if (jsobj_maybe_garbage(ptr))
+		untagged = jsobj_layout_untagged(&layout, propidx);
+		if (!untagged && jsobj_maybe_garbage(ptr))
 			propinfo |= JPI_BADPROPS;
+		if (untagged) {
+			jsobj_propvalue_double(&value, makedouble(ptr));
+		} else {
+			jsobj_propvalue_addr(&value, ptr);
+		}
 
-		if (func(buf, ptr, arg) != 0)
+		if (func(buf, &value, arg) != 0)
 			goto err;
 	}
 
@@ -2609,6 +2800,237 @@ err:
 		mdb_free(content, ncontent * sizeof (uintptr_t));
 
 	return (rval);
+}
+
+/*
+ * Layout descriptors
+ *
+ * See the comment above v8propvalue_t for important historical context about
+ * the representation of JavaScript values in V8.  You really need to read that
+ * to understand this, but the summary is that for objects whose properties are
+ * stored directly inside the object, V8 may represent JavaScript property
+ * values as either tagged values (which is what most of mdb_v8 knows about) or
+ * untagged, unboxed doubles.  It's not possible to know from the native value
+ * alone whether it represents a tagged value or an unboxed double, so the
+ * object itself (via its Map) needs an additional bit of per-property metadata
+ * to distinguish these cases.  That metadata is stored in a _layout
+ * descriptor_, and it's generally implemented using a bit vector with one bit
+ * per property; however, since the whole point of this is to save the tiniest
+ * morsels of both heap space and computation time, V8 avoids using any space or
+ * indirection that it doesn't absolutely need, so there are several cases.
+ *
+ *     (1) When double unboxing is disabled, rather than storing a layout
+ *         descriptor indicating that all values are tagged, there's no layout
+ *         descriptor in the Map at all.  As a result, we need to know whether
+ *         double unboxing is enabled so that we can avoid checking the
+ *         descriptor when this behavior is disabled.  There's no direct way for
+ *         us to tell this, but double unboxing is currently enabled for all
+ *         64-bit builds and disabled for all 32-bit builds.
+ *
+ *     (2) When the layout descriptor bitfield fits within a 31-bit value, the
+ *         layout descriptor itself is represented as an SMI.  Bit N of the
+ *         decoded SMI indicates whether the value for field N is tagged or not.
+ *         Take this Map object:
+ *
+ *           +------------------------------------------+
+ *           | Map                                      |
+ *           | ---                                      |
+ *           | ...                                      |
+ *           | layout_descriptor: SMI value 0x4800001   |
+ *           | ...                                      |
+ *           +------------------------------------------+
+ *
+ *         0x4800001 is the SMI-decoded value.  The actual encoding for
+ *         0x4800001 is different for 32-bit and 64-bit programs (though only
+ *         64-bit programs currently use double unboxing).  Either way, we can
+ *         reliably tell whether the value in the layout_descriptor is
+ *         SMI-encoded based on its tag bits.
+ *
+ *         The binary representation for that decoded value looks like this:
+ *
+ *          bits 210987654321098765432109876543210
+ *             +-----------------------------------+
+ *             | 000000100100000000000000000000001 |  SMI representation
+ *             +-------|--|----------------------|-+
+ *                     |  |                      +--- field  0 is untagged
+ *                     |  +-------------------------- field 23 is untagged
+ *                     +----------------------------- field 26 is untagged
+ *
+ *         This indicates that the values for fields 0, 23, and 26 are unboxed
+ *         doubles (i.e., the value stored inside the object is an actual double
+ *         value).  The values for all other fields are normal tagged values
+ *         (i.e., SMIs or HeapObjects).
+ *
+ *     (3) When the layout descriptor bitfield cannot fit within a 31-bit value,
+ *         the layout descriptor itself is a tagged pointer to a FixedTypedArray
+ *         of 32-bit integers, each of which represents the metadata for 32
+ *         fields.
+ *
+ *
+ *           +--------------------+           +----------------------------+
+ *           | Map                |     +---> | FixedTypedArray<uint32_t>  |
+ *           | ---                |     |     | -------------------------  |
+ *           | ...                |     |     | ...                        |
+ *           | layout_descriptor -------+     | length                     |
+ *           | ...                |           | ...                        |
+ *           +--------------------+           | 32-bit int 0               |
+ *                                            | 32-bit int 1               |
+ *                                            | 32-bit int ...             |
+ *                                            +----------------------------+
+ *
+ *         Each of the 32-bit ints is interpreted just as the decoded value in
+ *         case (2) above.
+ *
+ *     (4) Since untagged values are pretty uncommon, V8 avoids allocating
+ *         32-bit integers to expand the bitfield only to store all zeroes.  The
+ *         implementation then assumes that if it's asked whether field N is
+ *         tagged, and there is no bit for field N (because its bit logically
+ *         extends past the allocated bit vector), then field N is tagged.
+ *
+ *         To make this concrete, let's revisit case (2) above, where we had an
+ *         object with 27 fields, and only fields 0, 23, and 26 are untagged.
+ *         Any number of tagged fields can be added to this object without
+ *         changing the layout_descriptor.  If it grows to contain 42 fields,
+ *         but all of these new fields are tagged, then V8 knows the last fields
+ *         are tagged because there are no bits for them.  If a 43rd field is
+ *         added that's untagged, then V8 switches to case (3) using a
+ *         two-element array.  Even then, any number of tagged fields can
+ *         continue to be added without changing the representation.
+ *
+ * To summarize: the property bitfield is spread across a number of 32-bit
+ * integers, and high-order zero-filled words are not stored.  Given that, if
+ * only 31 bits are required, then the contents of that single 31-bit word are
+ * encoded as an SMI and stored in the layout_descriptor directly.  Otherwise,
+ * the layout_descriptor stores a pointer to an array of 32-bit integers.  In
+ * both cases, you access the bit for property N by finding the appropriate word
+ * (as N / 32) and then the appropriate bit in that word (N % 32).  If there
+ * aren't that many words, then the value is assumed to be tagged.  This
+ * algorithm is implemented in jsobj_layout_untagged().
+ */
+static int
+jsobj_layout_load(jsobj_layout_t *layoutp, uintptr_t map)
+{
+#ifdef _LP64
+	ssize_t off;
+#endif
+
+	bzero(layoutp, sizeof (*layoutp));
+
+#ifdef _LP64
+	if (V8_OFF_MAP_LAYOUT_DESCRIPTOR == -1) {
+		assert(!(layoutp->jl_flags & JL_F_HASLAYOUT));
+		return (0);
+	}
+
+	if (read_heap_ptr(&layoutp->jl_descriptor, map,
+	    V8_OFF_MAP_LAYOUT_DESCRIPTOR) != 0) {
+		return (-1);
+	}
+
+	if (V8_IS_SMI(layoutp->jl_descriptor)) {
+		layoutp->jl_flags |= JL_F_HASLAYOUT;
+		layoutp->jl_length = 1;
+		layoutp->jl_bitvecs[0] = V8_SMI_VALUE(layoutp->jl_descriptor);
+		if (layoutp->jl_bitvecs[0] == 0) {
+			layoutp->jl_flags |= JL_F_ALLTAGGED;
+		}
+
+		return (0);
+	}
+
+	/*
+	 * This is an incredibly cheesy implementation of a FixedTypedArray, but
+	 * we don't have a lot of sample cases with which to test a more
+	 * complete implementation.  If this becomes more widely used in V8, we
+	 * should first-class this data structure so that we have crisper
+	 * interfaces for working with it.
+	 */
+	if (heap_offset("FixedTypedArrayBase", "base_pointer", &off) == -1) {
+		v8_warn("large-style layout descriptor: failed to configure\n");
+		return (-1);
+	}
+
+	/*
+	 * On V8 prior to 4.6.85.23, the data for a FixedTypedArray starts at
+	 * the first double-aligned address after the base pointer.  With that
+	 * V8 version (and possibly earlier), there's an extra pointer-sized
+	 * value that we need to skip.
+	 */
+	off += sizeof (uintptr_t);
+	if (!v8_version_current_older(4, 6, 85, 23))
+		off += sizeof (uintptr_t);
+	off += (sizeof (double) - 1);
+	off &= ~(sizeof (double) - 1);
+
+	if (read_heap_smi(&layoutp->jl_length, layoutp->jl_descriptor,
+	    V8_OFF_FIXEDARRAY_LENGTH) != 0) {
+		v8_warn("large-style layout descriptor: "
+		    "failed to read length\n");
+		return (-1);
+	}
+
+	if (layoutp->jl_length > JL_MAXBITVECS) {
+		v8_warn("large-style layout descriptor: "
+		    "length too large (%d)\n", layoutp->jl_length);
+		return (-1);
+	}
+
+	if (mdb_vread(layoutp->jl_bitvecs,
+	    layoutp->jl_length * sizeof (uint32_t),
+	    V8_OFF_HEAP(layoutp->jl_descriptor + off)) == -1) {
+		v8_warn("large-style layout descriptor: failed to read array");
+		return (-1);
+	}
+
+	layoutp->jl_flags |= JL_F_HASLAYOUT | JL_F_ARRAY;
+#endif
+
+	return (0);
+}
+
+/*
+ * Returns whether 0-indexed field "propidx" is an untagged field according to
+ * the layout descriptor "layoutp".  The implementation is described in the
+ * comment above jsobj_layout_load().
+ */
+static boolean_t
+jsobj_layout_untagged(jsobj_layout_t *layoutp, uintptr_t propidx)
+{
+	int nbitsperword = 32;
+	int mask, whichword, whichbit;
+	uint32_t word;
+
+	/*
+	 * If there was no layout descriptor, then all fields are tagged.
+	 */
+	if (!(layoutp->jl_flags & JL_F_HASLAYOUT)) {
+		return (B_FALSE);
+	}
+
+	if (layoutp->jl_flags & JL_F_ALLTAGGED) {
+		return (B_FALSE);
+	}
+
+	/*
+	 * jsobj_layout_load() normalizes the two main cases by turning the
+	 * SMI-based representation into a one-element array.
+	 */
+	assert((layoutp->jl_flags & JL_F_ARRAY) != 0 ||
+	    layoutp->jl_length == 1);
+	whichword = propidx / nbitsperword;
+	whichbit = propidx % nbitsperword;
+	if (whichword >= layoutp->jl_length) {
+		/*
+		 * If the property's index is not contained in the layout
+		 * descriptor, that means it's tagged.
+		 */
+		return (B_FALSE);
+	}
+
+	assert(whichword < JL_MAXBITVECS);
+	word = layoutp->jl_bitvecs[whichword];
+	mask = 1 << whichbit;
+	return ((mask & word) != 0);
 }
 
 /*
@@ -2837,11 +3259,21 @@ jsfunc_name(uintptr_t funcinfop, char **bufp, size_t *lenp)
  * JavaScript-level object printing
  */
 
+static void
+jsobj_print_double(char **bufp, size_t *lenp, double numval)
+{
+	if (numval == (long long)numval)
+		(void) bsnprintf(bufp, lenp, "%lld", (long long)numval);
+	else
+		(void) bsnprintf(bufp, lenp, "%e", numval);
+}
+
 static int
-jsobj_print(uintptr_t addr, jsobj_print_t *jsop)
+jsobj_print_value(v8propvalue_t *valp, jsobj_print_t *jsop)
 {
 	uint8_t type;
 	const char *klass;
+	uintptr_t addr;
 	char **bufp = jsop->jsop_bufp;
 	size_t *lenp = jsop->jsop_lenp;
 
@@ -2864,8 +3296,15 @@ jsobj_print(uintptr_t addr, jsobj_print_t *jsop)
 		(void) bsnprintf(bufp, lenp, "%p: ", jsop->jsop_baseaddr);
 
 	if (jsop->jsop_printaddr && jsop->jsop_member == NULL)
-		(void) bsnprintf(bufp, lenp, "%p: ", addr);
+		(void) bsnprintf(bufp, lenp, "%p: ",
+		    valp == NULL ? NULL : valp->v8v_u.v8vu_addr);
 
+	if (valp != NULL && valp->v8v_isboxeddouble) {
+		jsobj_print_double(bufp, lenp, valp->v8v_u.v8vu_double);
+		return (0);
+	}
+
+	addr = valp == NULL ? NULL : valp->v8v_u.v8vu_addr;
 	if (V8_IS_SMI(addr)) {
 		(void) bsnprintf(bufp, lenp, "%d", V8_SMI_VALUE(addr));
 		return (0);
@@ -2909,6 +3348,13 @@ jsobj_print(uintptr_t addr, jsobj_print_t *jsop)
 		return (rv);
 	}
 
+	/*
+	 * MutableHeapNumbers behave just like HeapNumbers, but do not have a
+	 * separate class.
+	 */
+	if (type == V8_TYPE_MUTABLEHEAPNUMBER)
+		type = V8_TYPE_HEAPNUMBER;
+
 	klass = enum_lookup_str(v8_types, type, "<unknown>");
 
 	for (ent = &table[0]; ent->name != NULL; ent++) {
@@ -2924,6 +3370,14 @@ jsobj_print(uintptr_t addr, jsobj_print_t *jsop)
 }
 
 static int
+jsobj_print(uintptr_t addr, jsobj_print_t *jsop)
+{
+	v8propvalue_t value;
+	jsobj_propvalue_addr(&value, addr);
+	return (jsobj_print_value(&value, jsop));
+}
+
+static int
 jsobj_print_number(uintptr_t addr, jsobj_print_t *jsop)
 {
 	char **bufp = jsop->jsop_bufp;
@@ -2933,11 +3387,7 @@ jsobj_print_number(uintptr_t addr, jsobj_print_t *jsop)
 	if (read_heap_double(&numval, addr, V8_OFF_HEAPNUMBER_VALUE) == -1)
 		return (-1);
 
-	if (numval == (long long)numval)
-		(void) bsnprintf(bufp, lenp, "%lld", (long long)numval);
-	else
-		(void) bsnprintf(bufp, lenp, "%e", numval);
-
+	jsobj_print_double(bufp, lenp, numval);
 	return (0);
 }
 
@@ -2955,7 +3405,7 @@ jsobj_print_oddball(uintptr_t addr, jsobj_print_t *jsop)
 }
 
 static int
-jsobj_print_prop(const char *desc, uintptr_t val, void *arg)
+jsobj_print_prop(const char *desc, v8propvalue_t *val, void *arg)
 {
 	jsobj_print_t *jsop = arg, descend;
 	char **bufp = jsop->jsop_bufp;
@@ -2968,7 +3418,7 @@ jsobj_print_prop(const char *desc, uintptr_t val, void *arg)
 	descend.jsop_depth--;
 	descend.jsop_indent += 4;
 
-	(void) jsobj_print(val, &descend);
+	(void) jsobj_print_value(val, &descend);
 	(void) bsnprintf(bufp, lenp, ",");
 
 	jsop->jsop_nprops++;
@@ -2977,7 +3427,7 @@ jsobj_print_prop(const char *desc, uintptr_t val, void *arg)
 }
 
 static int
-jsobj_print_prop_member(const char *desc, uintptr_t val, void *arg)
+jsobj_print_prop_member(const char *desc, v8propvalue_t *val, void *arg)
 {
 	jsobj_print_t *jsop = arg, descend;
 	const char *member = jsop->jsop_member, *next = member;
@@ -3009,7 +3459,7 @@ jsobj_print_prop_member(const char *desc, uintptr_t val, void *arg)
 		descend.jsop_member = *next == '.' ? next + 1 : next;
 	}
 
-	rv = jsobj_print(val, &descend);
+	rv = jsobj_print_value(val, &descend);
 	jsop->jsop_found = descend.jsop_found;
 
 	return (rv);
@@ -4246,7 +4696,7 @@ findjsobjects_cmp_ninstances(const void *l, const void *r)
 
 /*ARGSUSED*/
 int
-findjsobjects_prop(const char *desc, uintptr_t val, void *arg)
+findjsobjects_prop(const char *desc, v8propvalue_t *val, void *arg)
 {
 	findjsobjects_state_t *fjs = arg;
 	findjsobjects_obj_t *current = fjs->fjs_current;
@@ -4516,13 +4966,20 @@ findjsobjects_mapping(findjsobjects_state_t *fjs, const prmap_t *pmp,
 }
 
 static void
-findjsobjects_references_add(findjsobjects_state_t *fjs, uintptr_t val,
+findjsobjects_references_add(findjsobjects_state_t *fjs, v8propvalue_t *valp,
     const char *desc, size_t index)
 {
 	findjsobjects_referent_t search, *referent;
 	findjsobjects_reference_t *reference;
 
-	search.fjsr_addr = val;
+	/*
+	 * Searching for unboxed floating-point values is not supported.
+	 */
+	if (valp->v8v_isboxeddouble) {
+		return;
+	}
+
+	search.fjsr_addr = valp->v8v_u.v8vu_addr;
 
 	if ((referent = avl_find(&fjs->fjs_referents, &search, NULL)) == NULL)
 		return;
@@ -4548,7 +5005,7 @@ findjsobjects_references_add(findjsobjects_state_t *fjs, uintptr_t val,
 }
 
 static int
-findjsobjects_references_prop(const char *desc, uintptr_t val, void *arg)
+findjsobjects_references_prop(const char *desc, v8propvalue_t *val, void *arg)
 {
 	findjsobjects_references_add(arg, val, desc, -1);
 
@@ -4562,6 +5019,7 @@ findjsobjects_references_array(findjsobjects_state_t *fjs,
 	findjsobjects_instance_t *inst = &obj->fjso_instances;
 	uintptr_t *elts;
 	size_t i, len;
+	v8propvalue_t value;
 
 	for (; inst != NULL; inst = inst->fjsi_next) {
 		uintptr_t addr = inst->fjsi_addr, ptr;
@@ -4572,8 +5030,10 @@ findjsobjects_references_array(findjsobjects_state_t *fjs,
 
 		fjs->fjs_addr = addr;
 
-		for (i = 0; i < len; i++)
-			findjsobjects_references_add(fjs, elts[i], NULL, i);
+		for (i = 0; i < len; i++) {
+			jsobj_propvalue_addr(&value, elts[i]);
+			findjsobjects_references_add(fjs, &value, NULL, i);
+		}
 
 		mdb_free(elts, len * sizeof (uintptr_t));
 	}
@@ -5981,9 +6441,18 @@ typedef struct jsprop_walk_data {
 
 /*ARGSUSED*/
 static int
-walk_jsprop_nprops(const char *desc, uintptr_t val, void *arg)
+walk_jsprop_nprops(const char *desc, v8propvalue_t *valp, void *arg)
 {
 	jsprop_walk_data_t *jspw = arg;
+
+	/*
+	 * Regrettably, there's really no way to make "::walk jsprop" include
+	 * unboxed floating-point values, because there's no way to emit them in
+	 * a way that can be read again by anything else.
+	 */
+	if (valp->v8v_isboxeddouble)
+		return (0);
+
 	jspw->jspw_nprops++;
 
 	return (0);
@@ -5991,10 +6460,14 @@ walk_jsprop_nprops(const char *desc, uintptr_t val, void *arg)
 
 /*ARGSUSED*/
 static int
-walk_jsprop_props(const char *desc, uintptr_t val, void *arg)
+walk_jsprop_props(const char *desc, v8propvalue_t *valp, void *arg)
 {
 	jsprop_walk_data_t *jspw = arg;
-	jspw->jspw_props[jspw->jspw_current++] = val;
+
+	if (valp->v8v_isboxeddouble)
+		return (0);
+
+	jspw->jspw_props[jspw->jspw_current++] = valp->v8v_u.v8vu_addr;
 
 	return (0);
 }

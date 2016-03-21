@@ -853,9 +853,17 @@ and then prints each one with the `jsframe` command.
 
     addr::walk jsprop
 
-Given a JavaScript object identified by `addr`, enumerates the values for all
+Given a JavaScript object identified by `addr`, enumerates the values for
 properties contained in the object.  This is useful for collection objects to
 print the values inside the collection.
+
+**Note:** On some versions of Node, due to V8's optimization of unboxing
+doubles, properties whose values are represented internally as double-precision
+floating-point numbers may not be included in the output of "::walk jsprop".
+They have no representation that can be distinguished from other values.  Values
+likely to be affected by this are non-integer numbers and integers larger than
+2147483648.  This currently only affects 64-bit versions of Node v4 and later.
+
 
 ### nodebuffer
 

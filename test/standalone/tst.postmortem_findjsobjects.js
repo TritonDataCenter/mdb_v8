@@ -26,7 +26,7 @@ var corefile = prefix + '.' + process.pid;
 var gcore = spawn('gcore', [ '-o', prefix, process.pid + '' ]);
 var output = '';
 var unlinkSync = require('fs').unlinkSync;
-var args = [ corefile ];
+var args = [ '-S', corefile ];
 
 if (process.env.MDB_LIBRARY_PATH && process.env.MDB_LIBRARY_PATH != '')
 	args = args.concat([ '-L', process.env.MDB_LIBRARY_PATH ]);

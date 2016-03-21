@@ -10,7 +10,7 @@ set -o pipefail
 #
 # Static configuration: Node versions to setup and test.
 #
-rn_versions="0.10.40 0.12.7 4.0.0 4.1.2 4.2.1"
+rn_versions="0.10.43 0.12.12 4.4.0 5.9.0"
 rn_platform="sunos"
 rn_arches="x86 x64"
 rn_nodebase="https://nodejs.org/dist"
@@ -193,7 +193,7 @@ function do_run_one
 		result="$(printf "%-7s %5s %3s: success" \
 		    "$version" "$platform" "$arch")"
 	else
-		result="$(printf "%7s %5s %3s: fail" \
+		result="$(printf "%-7s %5s %3s: fail" \
 		    "$version" "$platform" "$arch")"
 		rn_nerrors=$(( rn_nerrors + 1 ))
 	fi

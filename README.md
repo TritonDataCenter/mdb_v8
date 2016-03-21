@@ -14,7 +14,7 @@ This repository contains the canonical source for mdb\_v8, an
 [mdb](http://illumos.org/man/1/mdb) debugger module ("dmod") for debugging both
 live processes and core dumps of programs using Google's [V8 JavaScript
 engine](https://developers.google.com/v8/), and particularly
-[Node.js](https://nodejs.org/).  This module fully supports Node versions 4.0,
+[Node.js](https://nodejs.org/).  This module fully supports Node versions 5, 4,
 0.12, and 0.10.  Basic functionality (stack traces, printing out objects, and
 using `findjsobjects`) should also work on Node versions 0.8, 0.6, and 0.4, but
 those versions are not regularly tested.

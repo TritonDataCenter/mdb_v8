@@ -46,7 +46,7 @@ var corefile = prefix + '.' + process.pid;
 var gcore = spawn('gcore', [ '-o', prefix, process.pid + '' ]);
 var output = '';
 var unlinkSync = require('fs').unlinkSync;
-var args = [ corefile ];
+var args = [ '-S', corefile ];
 var sentinel = 'SENTINEL\n';
 var mdb;
 var passed;

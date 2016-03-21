@@ -41,7 +41,7 @@ var doogle = function () {
 var spawn = require('child_process').spawn;
 var prefix = '/var/tmp/node';
 var corefile = prefix + '.' + process.pid;
-var args = [ corefile ];
+var args = [ '-S', corefile ];
 
 if (process.env.MDB_LIBRARY_PATH && process.env.MDB_LIBRARY_PATH != '')
 	args = args.concat([ '-L', process.env.MDB_LIBRARY_PATH ]);
