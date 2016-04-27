@@ -8,11 +8,17 @@
  * Copyright (c) 2015, Joyent, Inc.
  */
 
-var common = require('./common');
 var assert = require('assert');
 var os = require('os');
 var path = require('path');
 var util = require('util');
+
+var common = require('./common');
+var getRuntimeVersions = require('../lib/runtime-versions').getRuntimeVersions;
+var compareV8Versions = require('../lib/runtime-versions').compareV8Versions;
+
+var RUNTIME_VERSIONS = getRuntimeVersions();
+var V8_VERSION = RUNTIME_VERSIONS.V8;
 
 /*
  * We're going to look for this function in ::jsfunctions.
@@ -164,17 +170,53 @@ processors = [
     function gotContext(chunk) {
 	var lines = chunk.split(/\n/);
 	var required = [
-	    /* BEGIN JSSTYLED */
-	    /* jsl:ignore */
-	    /^closure function: [a-z0-9]+ \(JSFunction\)$/,
-	    /^previous context: [a-z0-9]+ \(FixedArray\)$/,
-	    /^extension: 0 \(SMI: value = 0\)$/,
-	    /^global object: [a-z0-9]+ \(JSGlobalObject\)$/,
-	    /^    slot 0: [a-z0-9]+ \(.*\)$/,
-	    /^    slot 1: [a-z0-9]+ \(SMI: value = 9\)$/
-	    /* jsl:end */
-	    /* END JSSTYLED */
+		/* BEGIN JSSTYLED */
+		/* jsl:ignore */
+		/^closure function: [a-z0-9]+ \(JSFunction\)$/,
+		/^previous context: [a-z0-9]+ \(FixedArray\)$/,
+		/* jsl:end */
+		/* END JSSTYLED */
 	];
+
+	/*
+	 * With V8 4.9.104 and later, the sentinel for context extension is "the
+	 * hole" instead of a SMI with value 0. See
+	 * https://codereview.chromium.org/1484723003.
+	 */
+	if (compareV8Versions(V8_VERSION,
+		{major: 4, minor: 9, patch: 104}) >= 0) {
+		/* BEGIN JSSTYLED */
+		/* jsl:ignore */
+		required.push(/^extension: [a-z0-9]+ \(Oddball: "hole"\)$/);
+		/* jsl:end */
+		/* END JSSTYLED */
+	} else {
+		required.push(/^extension: 0 \(SMI: value = 0\)$/);
+	}
+
+	/*
+	 * With V8 4.9.88 and later, the reference to the global object (an
+	 * instance of JSGlobalObject) was replaced in most cases by a reference
+	 * to the native context, which is an instance of a subclass of
+	 * FixedArray.
+	 * See https://codereview.chromium.org/1480003002.
+	 */
+	if (compareV8Versions(V8_VERSION,
+		{major: 4, minor: 9, patch: 88}) >= 0) {
+		required.push(/^native context: [a-z0-9]+ \(FixedArray\)$/);
+	} else {
+		required.push(/^global object: [a-z0-9]+ \(JSGlobalObject\)$/);
+	}
+
+	required = required.concat([
+		/* BEGIN JSSTYLED */
+		/* jsl:ignore */
+		/^    slot 0: [a-z0-9]+ \(.*\)$/,
+		/^    slot 1: [a-z0-9]+ \(SMI: value = 9\)$/
+		/* jsl:end */
+		/* END JSSTYLED */
+	]);
+
 	var func;
 
 	lines.forEach(function (line) {

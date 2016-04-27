@@ -168,6 +168,7 @@ intptr_t V8_CONTEXT_IDX_CLOSURE;
 intptr_t V8_CONTEXT_IDX_PREV;
 intptr_t V8_CONTEXT_IDX_EXT;
 intptr_t V8_CONTEXT_IDX_GLOBAL;
+intptr_t V8_CONTEXT_IDX_NATIVE;
 
 intptr_t V8_SCOPEINFO_IDX_NPARAMS;
 intptr_t V8_SCOPEINFO_IDX_NSTACKLOCALS;
@@ -195,6 +196,7 @@ ssize_t V8_OFF_JSFUNCTION_CONTEXT;
 ssize_t V8_OFF_JSFUNCTION_SHARED;
 ssize_t V8_OFF_JSOBJECT_ELEMENTS;
 ssize_t V8_OFF_JSOBJECT_PROPERTIES;
+ssize_t V8_OFF_JSRECEIVER_PROPERTIES;
 ssize_t V8_OFF_MAP_CONSTRUCTOR;
 ssize_t V8_OFF_MAP_CONSTRUCTOR_OR_BACKPOINTER;
 ssize_t V8_OFF_MAP_INOBJECT_PROPERTIES;
@@ -360,6 +362,13 @@ static v8_constant_t v8_constants[] = {
 	    V8_CONSTANT_FALLBACK(0, 0), 2 },
 	{ &V8_CONTEXT_IDX_GLOBAL, "v8dbg_context_idx_global",
 	    V8_CONSTANT_FALLBACK(0, 0), 3 },
+	/*
+	 * https://codereview.chromium.org/1480003002, which replaces the link
+	 * from a context to the global object with a link to the native
+	 * context, landed in V8 4.9.88.
+	 */
+	{ &V8_CONTEXT_IDX_NATIVE, "v8dbg_context_idx_native",
+	    V8_CONSTANT_FALLBACK(4, 9), 3 },
 
 	{ &V8_SCOPEINFO_IDX_NPARAMS, "v8dbg_scopeinfo_idx_nparams",
 	    V8_CONSTANT_FALLBACK(3, 7), 1 },
@@ -415,8 +424,16 @@ static v8_offset_t v8_offsets[] = {
 	    "JSFunction", "shared" },
 	{ &V8_OFF_JSOBJECT_ELEMENTS,
 	    "JSObject", "elements" },
+	/*
+	 * https://codereview.chromium.org/1575423002 which landed in V8 4.9.353
+	 * moved the properties from JSObject to JSReceiver.
+	 */
 	{ &V8_OFF_JSOBJECT_PROPERTIES,
-	    "JSObject", "properties" },
+	    "JSObject", "properties", B_FALSE,
+		V8_CONSTANT_REMOVED_SINCE(4, 9) },
+	{ &V8_OFF_JSRECEIVER_PROPERTIES,
+	    "JSReceiver", "properties", B_FALSE,
+		V8_CONSTANT_ADDED_SINCE(4, 9) },
 	{ &V8_OFF_JSREGEXP_DATA,
 	    "JSRegExp", "data", B_TRUE },
 	{ &V8_OFF_MAP_CONSTRUCTOR,
@@ -999,6 +1016,10 @@ again:
 	if (V8_OFF_MAP_INOBJECT_PROPERTIES_OR_CTOR_FUN_INDEX != -1)
 		V8_OFF_MAP_INOBJECT_PROPERTIES =
 		    V8_OFF_MAP_INOBJECT_PROPERTIES_OR_CTOR_FUN_INDEX;
+
+	if (V8_OFF_JSOBJECT_PROPERTIES == -1) {
+		V8_OFF_JSOBJECT_PROPERTIES = V8_OFF_JSRECEIVER_PROPERTIES;
+	}
 
 	return (failed ? -1 : 0);
 }
