@@ -94,6 +94,7 @@ extern ssize_t V8_OFF_STRING_LENGTH;
 extern intptr_t V8_CONTEXT_IDX_CLOSURE;
 extern intptr_t V8_CONTEXT_IDX_EXT;
 extern intptr_t V8_CONTEXT_IDX_GLOBAL;
+extern intptr_t V8_CONTEXT_IDX_NATIVE;
 extern intptr_t V8_CONTEXT_IDX_PREV;
 extern intptr_t V8_CONTEXT_NCOMMON;
 

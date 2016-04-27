@@ -74,8 +74,49 @@ function getRuntimeVersions() {
 	};
 }
 
+/*
+ * Compares two objects representing V8 versions. Returns 1 if versionA >
+ * versionB, -1 if versionA < versionB and 0 otherwise.
+ */
+function compareV8Versions(versionA, versionB) {
+	assert(typeof (versionA) === 'object', 'versionA must be an object');
+	assert(typeof (versionA.major) === 'number',
+		'versionA.major must be a number');
+	assert(typeof (versionA.minor) === 'number',
+		'versionA.minor must be a number');
+	assert(typeof (versionA.patch) === 'number',
+		'versionA.patch must be a number');
+	assert(versionA.build === undefined || typeof (versionA.build) === 'number',
+		'versionA.build must be a number or undefined');
+
+	assert(typeof (versionB) === 'object', 'versionB must be an object');
+	assert(typeof (versionB.major) === 'number',
+		'versionB.major must be a number');
+	assert(typeof (versionB.minor) === 'number',
+		'versionB.minor must be a number');
+	assert(typeof (versionB.patch) === 'number',
+		'versionB.patch must be a number');
+	assert(versionB.build === undefined || typeof (versionB.build) === 'number',
+		'versionB.build must be a number');
+
+	var versionLevelIndex;
+	var versionLevels = ['major', 'minor', 'patch', 'build'];
+
+	for (versionLevelIndex in versionLevels) {
+		var versionLevel = versionLevels[versionLevelIndex];
+		if (versionA[versionLevel] !== undefined &&
+			versionB[versionLevel] !== undefined &&
+			versionA[versionLevel] != versionB[versionLevel]) {
+			return versionA[versionLevel] > versionB[versionLevel] ? 1 : -1;
+		}
+	}
+
+	return 0;
+}
+
 module.exports = {
 	getNodeVersions: getNodeVersions,
 	getV8Versions: getV8Versions,
-	getRuntimeVersions: getRuntimeVersions
+	getRuntimeVersions: getRuntimeVersions,
+	compareV8Versions: compareV8Versions
 };
