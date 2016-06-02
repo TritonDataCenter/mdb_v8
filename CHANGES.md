@@ -12,6 +12,7 @@
 
 ## Unreleased changes
 
+* #68 Crash on ::findjsobjects -r with Node v4.3.1 (V8 4.5.103.35)
 * #52 mdb dumped core after using jsclosure on invalid closure
 * #51 v8internal fails for valid JSObject
 
