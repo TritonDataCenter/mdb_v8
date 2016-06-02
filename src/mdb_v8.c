@@ -4969,6 +4969,8 @@ static void
 findjsobjects_references_add(findjsobjects_state_t *fjs, v8propvalue_t *valp,
     const char *desc, size_t index)
 {
+	assert(valp != NULL);
+
 	findjsobjects_referent_t search, *referent;
 	findjsobjects_reference_t *reference;
 
@@ -5007,7 +5009,13 @@ findjsobjects_references_add(findjsobjects_state_t *fjs, v8propvalue_t *valp,
 static int
 findjsobjects_references_prop(const char *desc, v8propvalue_t *val, void *arg)
 {
-	findjsobjects_references_add(arg, val, desc, -1);
+	/*
+	 * jsobj_properties will still call us if the layout of the object it's
+	 * inspecting cannot be understood, but with val == NULL. In this case,
+	 * there's no point in adding a reference though.
+	 */
+	if (val != NULL)
+		findjsobjects_references_add(arg, val, desc, -1);
 
 	return (0);
 }
