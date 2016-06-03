@@ -44,17 +44,17 @@ https://us-east.manta.joyent.com/Joyent_Dev/public/mdb_v8.  If you have the
 can list the latest binaries with:
 
     $ mfind -t o $(mget -q /Joyent_Dev/public/mdb_v8/latest)
-    /Joyent_Dev/public/mdb_v8/v1.1.1/mdb_v8_amd64.so
-    /Joyent_Dev/public/mdb_v8/v1.1.1/mdb_v8_ia32.so
+    /Joyent_Dev/public/mdb_v8/v1.1.3/mdb_v8_amd64.so
+    /Joyent_Dev/public/mdb_v8/v1.1.3/mdb_v8_ia32.so
 
 You can fetch a specific binary like this (in this case, the 32-bit version
-1.1.1 binary):
+1.1.3 binary):
 
-    $ mget -O /Joyent_Dev/public/mdb_v8/v1.1.1/mdb_v8_ia32.so
+    $ mget -O /Joyent_Dev/public/mdb_v8/v1.1.3/mdb_v8_ia32.so
 
 or using curl:
 
-    $ curl -O https://us-east.manta.joyent.com/Joyent_Dev/public/mdb_v8/v1.1.1/mdb_v8_ia32.so
+    $ curl -O https://us-east.manta.joyent.com/Joyent_Dev/public/mdb_v8/v1.1.3/mdb_v8_ia32.so
 
 This one-liner will get you the latest 32-bit binary:
 
