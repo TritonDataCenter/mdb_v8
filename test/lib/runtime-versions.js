@@ -12,15 +12,17 @@ function getNodeVersions() {
 		return cachedVersions.node;
 	}
 
-	NODE_VERSIONS = process.versions.node.split('.');
+	NODE_VERSIONS =
+		process.versions.node.match(/^(\d+)\.(\d+)\.(\d+)(\-\w+)?$/);
+	assert.ok(NODE_VERSIONS);
 
-	NODE_MAJOR = Number(NODE_VERSIONS[0]);
+	NODE_MAJOR = Number(NODE_VERSIONS[1]);
 	assert.equal(isNaN(NODE_MAJOR), false);
 
-	NODE_MINOR = Number(NODE_VERSIONS[1]);
+	NODE_MINOR = Number(NODE_VERSIONS[2]);
 	assert.equal(isNaN(NODE_MINOR), false);
 
-	NODE_PATCH = Number(NODE_VERSIONS[2]);
+	NODE_PATCH = Number(NODE_VERSIONS[3]);
 	assert.equal(isNaN(NODE_PATCH), false);
 
 	cachedVersions.node = {

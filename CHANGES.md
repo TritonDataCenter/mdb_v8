@@ -12,7 +12,7 @@
 
 ## Unreleased changes
 
-None.
+* #72: tests cannot run on non-release versions of node
 
 ## v1.1.3 (2016-06-03)
 
