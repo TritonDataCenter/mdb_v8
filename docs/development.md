@@ -5,33 +5,47 @@
 -->
 
 <!--
-    Copyright (c) 2015, Joyent, Inc.
+    Copyright (c) 2016, Joyent, Inc.
 -->
 
 # mdb_v8 Developer's Notes
 
 ## Contribution guidelines
 
-Contributions welcome, but please help us review your changes (and keep code
+Contributions are welcome, but please help us review your changes (and keep code
 quality high) by following these guidelines.  **If you have any questions, feel
 free to ask.**  Don't let these guidelines be a barrier to contributing!
 
-If you're not sure exactly what change you want to make, create an issue to
-discuss it.  Once you've got a change ready to integrate, submit a pull request.
+**This repository does not use GitHub pull requests.**  Changes should be
+submitted through
+[cr.joyent.us](https://github.com/joyent/joyent-gerrit/tree/master/docs/user).
 
-**Formatting nits**: Pull requests should include text explaining the suggested
-change.  (Do not put this text in the commit message.  The commit message should
-consist of one line per logical change, each consisting of the issue number and
-synopsis.  See previous commit messages for examples.)  Before integration, the
-PR should be squashed into one commit.
+**Use of GitHub issues:** There should be at least one GitHub issue filed for
+your change (even trivial changes).  This issue should explain the change, the
+impact on users, how you've tested it, and any other information that reviewers
+might need to know about the change.  (Do not put this text in the commit
+message.  See below.)  If you're not sure exactly what change you want to make,
+feel free to create an issue to discuss it.
 
-**Completeness:** Pull requests should include relevant updates to the
-documentation, including CHANGES.md.  New commands, walkers, and non-private
-options must have associated documentation, both in the dmod (so that "::help
-DCMD" works) and in the usage guide.
+**Commit messages:** The commit message should consist of one line per
+associated issue, each line consisting of the issue number and issue synopsis.
+See previous commit messages for examples.  There should be no other text in the
+commit message.  Other information related to the change should generally be in
+the GitHub issue comments.
+
+**Completeness:** Changes should include relevant updates to the documentation,
+including CHANGES.md.  New commands, walkers, and non-private options must have
+associated documentation, both in the dmod (so that "::help DCMD" works) and in
+the usage guide.
 
 **Testing**: All changes should be `make prepush` clean, but additional testing
 is probably necessary for most changes.  See below.
+
+Once you've got a change ready to integrate, you can submit it to cr.joyent.us
+using the [cr.joyent.us user
+instructions](https://github.com/joyent/joyent-gerrit/tree/master/docs/user).
+Feel free to reach out to past contributors to ask them to review your change.
+Review and integration happen through the cr.joyent.us interface.
 
 
 ## Testing
