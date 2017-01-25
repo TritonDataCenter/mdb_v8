@@ -95,6 +95,7 @@ static ssize_t	V8_OFF_FP_CONTEXT;
 static ssize_t	V8_OFF_FP_MARKER;
 static ssize_t	V8_OFF_FP_FUNCTION;
 static ssize_t	V8_OFF_FP_ARGS;
+static ssize_t	V8_OFF_FP_CONTEXT_OR_FRAME_TYPE;
 
 /*
  * The following constants are used by macros defined in heap-dbg-common.h to
@@ -221,6 +222,7 @@ ssize_t V8_OFF_SHAREDFUNCTIONINFO_SCOPE_INFO;
 ssize_t V8_OFF_SHAREDFUNCTIONINFO_END_POSITION;
 ssize_t V8_OFF_SHAREDFUNCTIONINFO_FUNCTION_TOKEN_POSITION;
 ssize_t V8_OFF_SHAREDFUNCTIONINFO_INFERRED_NAME;
+ssize_t V8_OFF_SHAREDFUNCTIONINFO_IDENTIFIER;
 ssize_t V8_OFF_SHAREDFUNCTIONINFO_LENGTH;
 ssize_t V8_OFF_SHAREDFUNCTIONINFO_SCRIPT;
 ssize_t V8_OFF_SHAREDFUNCTIONINFO_NAME;
@@ -270,9 +272,17 @@ typedef struct v8_constant {
 } v8_constant_t;
 
 static v8_constant_t v8_constants[] = {
+	{ &V8_OFF_FP_CONTEXT_OR_FRAME_TYPE,
+		"v8dbg_off_fp_context_or_frame_type",
+#ifdef _LP64
+		V8_CONSTANT_FALLBACK(5, 1), -0x8 },
+#else
+		V8_CONSTANT_FALLBACK(5, 1), -0x4 },
+#endif
 	{ &V8_OFF_FP_CONTEXT,		"v8dbg_off_fp_context"		},
 	{ &V8_OFF_FP_FUNCTION,		"v8dbg_off_fp_function"		},
-	{ &V8_OFF_FP_MARKER,		"v8dbg_off_fp_marker"		},
+	{ &V8_OFF_FP_MARKER,		"v8dbg_off_fp_marker",
+	    V8_CONSTANT_REMOVED_SINCE(5, 1)		},
 	{ &V8_OFF_FP_ARGS,		"v8dbg_off_fp_args"		},
 
 	{ &V8_FirstNonstringType,	"v8dbg_FirstNonstringType"	},
@@ -489,7 +499,17 @@ static v8_offset_t v8_offsets[] = {
 	{ &V8_OFF_SHAREDFUNCTIONINFO_FUNCTION_TOKEN_POSITION,
 	    "SharedFunctionInfo", "function_token_position" },
 	{ &V8_OFF_SHAREDFUNCTIONINFO_INFERRED_NAME,
-	    "SharedFunctionInfo", "inferred_name" },
+	    "SharedFunctionInfo", "inferred_name",
+		V8_CONSTANT_REMOVED_SINCE(5, 1) },
+#ifdef _LP64
+	{ &V8_OFF_SHAREDFUNCTIONINFO_IDENTIFIER,
+	    "SharedFunctionInfo", "function_identifier",
+		V8_CONSTANT_FALLBACK(5, 1), 79},
+#else
+	{ &V8_OFF_SHAREDFUNCTIONINFO_IDENTIFIER,
+	    "SharedFunctionInfo", "function_identifier",
+		V8_CONSTANT_FALLBACK(5, 1), 39},
+#endif
 	{ &V8_OFF_SHAREDFUNCTIONINFO_LENGTH,
 	    "SharedFunctionInfo", "length" },
 	{ &V8_OFF_SHAREDFUNCTIONINFO_NAME,
@@ -1019,6 +1039,32 @@ again:
 
 	if (V8_OFF_JSOBJECT_PROPERTIES == -1) {
 		V8_OFF_JSOBJECT_PROPERTIES = V8_OFF_JSRECEIVER_PROPERTIES;
+	}
+
+	/*
+	 * Starting with V8 5.1.71 (and node v6.5.0), the value that identifies
+	 * the type of an internal frame is stored at offset
+	 * V8_OFF_FP_CONTEXT_OR_FRAME_TYPE. See
+	 * https://codereview.chromium.org/1696043002. If the value of that
+	 * offset is -1, it means we're in the presence of an older version of
+	 * V8, and we fall back to the previous offset used to retrieve that
+	 * value, which is V8_OFF_FP_MARKER.
+	 */
+	if (V8_OFF_FP_CONTEXT_OR_FRAME_TYPE == -1) {
+		V8_OFF_FP_CONTEXT_OR_FRAME_TYPE = V8_OFF_FP_MARKER;
+	}
+
+	/*
+	 * Starting with V8 5.1.162 (and node v6.5.0), the SharedFunctionInfo's
+	 * "inferred_name"" field was renamed to "function_identifier" (See
+	 * https://codereview.chromium.org/1801023002). If the value of
+	 * V8_OFF_SHAREDFUNCTIONINFO_IDENTIFIER is -1, it means we're in the
+	 * presence of an older V8 version, and we should use the original
+	 * offset.
+	 */
+	if (V8_OFF_SHAREDFUNCTIONINFO_IDENTIFIER == -1) {
+		V8_OFF_SHAREDFUNCTIONINFO_IDENTIFIER =
+		    V8_OFF_SHAREDFUNCTIONINFO_INFERRED_NAME;
 	}
 
 	return (failed ? -1 : 0);
@@ -4227,6 +4273,7 @@ do_jsframe_special(uintptr_t fptr, uintptr_t raddr, jsframe_t *jsf)
 	uintptr_t ftype;
 	const char *ftypename;
 	char *prop = jsf->jsf_prop;
+	uintptr_t internal_frametype_addr;
 
 	/*
 	 * First see if this looks like a native frame rather than a JavaScript
@@ -4253,10 +4300,21 @@ do_jsframe_special(uintptr_t fptr, uintptr_t raddr, jsframe_t *jsf)
 	}
 
 	/*
-	 * Figure out what kind of frame this is using the same algorithm as
-	 * V8's ComputeType function.  First, look for an ArgumentsAdaptorFrame.
+	 * Figure out what kind of internal frame this is using the same
+	 * algorithm as V8's ComputeType function.
 	 */
-	if (mdb_vread(&ftype, sizeof (ftype), fptr + V8_OFF_FP_CONTEXT) != -1 &&
+
+	/*
+	 * With versions of V8 < 5.1.71 (and node < v6.5.0), an ArgumentsAdaptor
+	 * frame was marked by a specific SMI value at an address equivalent to
+	 * the frame pointer + context offset, which is a different offset than
+	 * the one used to determine the type of other internal frames. For
+	 * later versions of V8, all internal (special) frames are identified
+	 * by a value at the same offset, so there's no need to special case
+	 * ArgumentsAdaptor frames.
+	 */
+	if (v8_version_current_older(5, 1, 0, 0) &&
+	    mdb_vread(&ftype, sizeof (ftype), fptr + V8_OFF_FP_CONTEXT) != -1 &&
 	    V8_IS_SMI(ftype) &&
 	    (ftypename = enum_lookup_str(v8_frametypes, V8_SMI_VALUE(ftype),
 	    NULL)) != NULL && strstr(ftypename, "ArgumentsAdaptor") != NULL) {
@@ -4265,17 +4323,16 @@ do_jsframe_special(uintptr_t fptr, uintptr_t raddr, jsframe_t *jsf)
 
 		if (jsf->jsf_showall) {
 			jsframe_print_skipped(jsf);
-			mdb_printf("%p %a <%s>\n", fptr, raddr, ftypename);
+			mdb_printf("%p %a <%s>\n", fptr, raddr,
+			    ftypename);
 		} else {
 			jsframe_skip(jsf);
 		}
 		return (0);
 	}
 
-	/*
-	 * Other special frame types are indicated by a marker.
-	 */
-	if (mdb_vread(&ftype, sizeof (ftype), fptr + V8_OFF_FP_MARKER) != -1 &&
+	internal_frametype_addr = fptr + V8_OFF_FP_CONTEXT_OR_FRAME_TYPE;
+	if (mdb_vread(&ftype, sizeof (ftype), internal_frametype_addr) != -1 &&
 	    V8_IS_SMI(ftype)) {
 		if (prop != NULL)
 			return (0);

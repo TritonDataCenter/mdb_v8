@@ -270,7 +270,7 @@ v8funcinfo_load(uintptr_t funcinfo, int memflags)
 	}
 
 	if (read_heap_ptr(&inferred_name, funcinfo,
-	    V8_OFF_SHAREDFUNCTIONINFO_INFERRED_NAME) != 0) {
+	    V8_OFF_SHAREDFUNCTIONINFO_IDENTIFIER) != 0) {
 		inferred_name = 0;
 	}
 
