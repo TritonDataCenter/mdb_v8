@@ -41,6 +41,24 @@ gcore.stderr.on('data', function (data) {
 	console.log('gcore: ' + data);
 });
 
+function verifyTest(testName, verifiers, verifierIndex, testOutput) {
+	assert.ok(typeof (testName) === 'string',
+		'testName must be a string');
+	assert.ok(Array.isArray(verifiers), 'verifiers must be an array');
+	assert.ok(typeof (verifierIndex) === 'number' &&
+		isFinite(verifierIndex),
+		'verifierIndex must be a finite number');
+	assert.ok(Array.isArray(testOutput),
+		'testOutput must be an array');
+
+	var verifier = verifiers[verifierIndex];
+	assert.ok(verifier, 'verifier for test ' + testName
+		+ ' must exists');
+	console.error('verifying ' + testName + ' using '
+		+ verifier.name);
+	verifier(testOutput);
+}
+
 gcore.on('exit', function (code) {
 	var verifiers = [];
 
@@ -53,9 +71,9 @@ gcore.on('exit', function (code) {
 
 	mdb.on('exit', function (code2) {
 		var verifierIndex = -1;
-		var verifier;
 		var testName;
 		var currentTestOutput = null;
+		var i;
 
 		var retained = '; core retained as ' + corefile;
 
@@ -73,8 +91,8 @@ gcore.on('exit', function (code) {
 				// If we already were parsing a previous test,
 				// run the verifier for this previous test.
 				if (currentTestOutput !== null) {
-					verifyTest(testName, verifierIndex,
-					    currentTestOutput);
+					verifyTest(testName, verifiers,
+					    verifierIndex, currentTestOutput);
 				}
 
 				// Move to the next verifier function and reset
@@ -92,27 +110,11 @@ gcore.on('exit', function (code) {
 		}
 
 		// Verify the last test
-		verifyTest(testName, verifierIndex, currentTestOutput);
+		verifyTest(testName, verifiers, verifierIndex,
+		    currentTestOutput);
 
 		unlinkSync(corefile);
 		process.exit(0);
-
-		function verifyTest(testName, verifierIndex, testOutput) {
-			assert.ok(typeof (testName) === 'string',
-				'testName must be a string');
-			assert.ok(typeof (verifierIndex) === 'number' &&
-				isFinite(verifierIndex),
-				'verifierIndex must be a finite number');
-			assert.ok(Array.isArray(testOutput),
-				'testOutput must be an array');
-
-			var verifier = verifiers[verifierIndex];
-			assert.ok(verifier, 'verifier for test ' + testName
-				+ ' must exists');
-			console.error('verifying ' + testName + ' using '
-				+ verifier.name);
-			verifier(testOutput);
-		}
 	});
 
 	mdb.stdout.on('data', function (data) {
@@ -123,31 +125,31 @@ gcore.on('exit', function (code) {
 		console.log('mdb stderr: ' + data);
 	});
 
-	verifiers.push(function verifyFindjsobjectsByConstructor(output) {
+	verifiers.push(function verifyFindjsobjectsByConstructor(cmdOutput) {
 		var expectedOutputLine = '"OBEY": "' + obj.OBEY + '"';
-		assert.ok(output.some(function findExpectedLine(line) {
+		assert.ok(cmdOutput.some(function findExpectedLine(line) {
 			return (line.indexOf(expectedOutputLine) !== -1);
 		}));
 	});
 
-	verifiers.push(function verifyFindjsobjectsByProperty(output) {
+	verifiers.push(function verifyFindjsobjectsByProperty(cmdOutput) {
 		var expectedOutputLine = '"OBEY": "' + obj.OBEY + '"';
-		assert.ok(output.some(function findExpectedLine(line) {
+		assert.ok(cmdOutput.some(function findExpectedLine(line) {
 			return (line.indexOf(expectedOutputLine) !== -1);
 		}));
 	});
 
-	verifiers.push(function verifyFindjsobjectsByReference(output) {
+	verifiers.push(function verifyFindjsobjectsByReference(cmdOutput) {
 		var refRegexp =
 		    /^[0-9a-fA-F]+ referred to by\s([0-9a-fA-F]+).foo/;
-		assert.ok(output.length > 0,
+		assert.ok(cmdOutput.length > 0,
 			'::findjsobjects -r should output at least one line');
 
 		// Finding just one line that outputs a reference from .foo is
 		// enough, since ::findjsobjects -c Foo | ::findjsobjects could
 		// output addresses that do not represent the actual instance
 		// referenced by the .foo property.
-		assert.ok(output.some(function findReferenceOutput(line) {
+		assert.ok(cmdOutput.some(function findReferenceOutput(line) {
 			return (line.match(refRegexp) !== null);
 		}), '::findjsobjects -r output should match ' + refRegexp);
 	});

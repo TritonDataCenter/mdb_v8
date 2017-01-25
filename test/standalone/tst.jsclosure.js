@@ -173,7 +173,7 @@ processors = [
 		/* BEGIN JSSTYLED */
 		/* jsl:ignore */
 		/^closure function: [a-z0-9]+ \(JSFunction\)$/,
-		/^previous context: [a-z0-9]+ \(FixedArray\)$/,
+		/^previous context: [a-z0-9]+ \(FixedArray\)$/
 		/* jsl:end */
 		/* END JSSTYLED */
 	];
