@@ -12,6 +12,10 @@
 
 ## Unreleased changes
 
+None.
+
+## v1.1.4 (2017-01-30)
+
 * #77 Node v6.6.0 issues
 * #72: tests cannot run on non-release versions of node
 
