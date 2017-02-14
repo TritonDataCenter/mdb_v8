@@ -165,8 +165,11 @@ include Makefile.arch.targ
 # is baked into the binary itself (so the dmod can report its version) and also
 # used in the publish target.
 #
-$(MDBV8_BUILD)/mdb_v8_version.c: version
+$(MDBV8_BUILD)/mdb_v8_version.c: version | $(MDBV8_BUILD)
 	tools/mkversion < $^ > $@
+
+$(MDBV8_BUILD):
+	$(MKDIRP)
 
 #
 # Include common Joyent Makefile for JavaScript "check" targets.
