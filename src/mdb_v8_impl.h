@@ -5,7 +5,7 @@
  */
 
 /*
- * Copyright (c) 2015, Joyent, Inc.
+ * Copyright (c) 2017, Joyent, Inc.
  */
 
 /*
@@ -52,6 +52,7 @@ boolean_t jsobj_is_undefined(uintptr_t);
  * represent all the metadata constants used by multiple C files.
  */
 extern intptr_t V8_TYPE_JSFUNCTION;
+extern intptr_t V8_TYPE_JSBOUNDFUNCTION;
 extern intptr_t V8_TYPE_FIXEDARRAY;
 
 extern intptr_t V8_IsNotStringMask;
@@ -66,6 +67,7 @@ extern intptr_t V8_SeqStringTag;
 extern intptr_t V8_ConsStringTag;
 extern intptr_t V8_SlicedStringTag;
 extern intptr_t V8_ExternalStringTag;
+extern intptr_t V8_CompilerHints_BoundFunction;
 
 extern ssize_t V8_OFF_CODE_INSTRUCTION_SIZE;
 extern ssize_t V8_OFF_CODE_INSTRUCTION_START;
@@ -74,7 +76,11 @@ extern ssize_t V8_OFF_CONSSTRING_SECOND;
 extern ssize_t V8_OFF_EXTERNALSTRING_RESOURCE;
 extern ssize_t V8_OFF_FIXEDARRAY_DATA;
 extern ssize_t V8_OFF_FIXEDARRAY_LENGTH;
+extern ssize_t V8_OFF_JSBOUNDFUNCTION_BOUND_ARGUMENTS;
+extern ssize_t V8_OFF_JSBOUNDFUNCTION_BOUND_TARGET_FUNCTION;
+extern ssize_t V8_OFF_JSBOUNDFUNCTION_BOUND_THIS;
 extern ssize_t V8_OFF_JSFUNCTION_CONTEXT;
+extern ssize_t V8_OFF_JSFUNCTION_LITERALS_OR_BINDINGS;
 extern ssize_t V8_OFF_JSFUNCTION_SHARED;
 extern ssize_t V8_OFF_SCRIPT_LINE_ENDS;
 extern ssize_t V8_OFF_SCRIPT_NAME;
@@ -82,6 +88,7 @@ extern ssize_t V8_OFF_SEQASCIISTR_CHARS;
 extern ssize_t V8_OFF_SEQONEBYTESTR_CHARS;
 extern ssize_t V8_OFF_SEQTWOBYTESTR_CHARS;
 extern ssize_t V8_OFF_SHAREDFUNCTIONINFO_CODE;
+extern ssize_t V8_OFF_SHAREDFUNCTIONINFO_COMPILER_HINTS;
 extern ssize_t V8_OFF_SHAREDFUNCTIONINFO_SCOPE_INFO;
 extern ssize_t V8_OFF_SHAREDFUNCTIONINFO_INFERRED_NAME;
 extern ssize_t V8_OFF_SHAREDFUNCTIONINFO_IDENTIFIER;

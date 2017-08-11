@@ -5,7 +5,7 @@
  */
 
 /*
- * Copyright (c) 2015, Joyent, Inc.
+ * Copyright (c) 2017, Joyent, Inc.
  */
 
 /*
@@ -99,6 +99,7 @@ typedef struct v8fixedarray v8fixedarray_t;
 typedef struct v8string v8string_t;
 
 typedef struct v8function v8function_t;
+typedef struct v8boundfunction v8boundfunction_t;
 typedef struct v8code v8code_t;
 typedef struct v8funcinfo v8funcinfo_t;
 typedef struct v8context v8context_t;
@@ -225,6 +226,8 @@ int v8string_write(v8string_t *, mdbv8_strbuf_t *,
  * JSFunction objects represent closures, rather than a single instance of the
  * function in the source code.  There may be many JSFunction objects for what
  * programmers would typically call a "function" -- one for each active closure.
+ *
+ * If you're working with a bound function, use v8boundfunction_t.
  */
 v8function_t *v8function_load(uintptr_t, int);
 void v8function_free(v8function_t *);
@@ -262,7 +265,6 @@ uintptr_t v8code_addr(v8code_t *);
 uintptr_t v8code_instructions_start(v8code_t *);
 uintptr_t v8code_instructions_size(v8code_t *);
 
-
 /*
  * Working with Contexts
  */
@@ -297,5 +299,24 @@ int v8scopeinfo_iter_vars(v8scopeinfo_t *, v8scopeinfo_vartype_t,
     int (*)(v8scopeinfo_t *, v8scopeinfo_var_t *, void *), void *);
 size_t v8scopeinfo_var_idx(v8scopeinfo_t *, v8scopeinfo_var_t *);
 uintptr_t v8scopeinfo_var_name(v8scopeinfo_t *, v8scopeinfo_var_t *);
+
+/*
+ * Working with bound functions.
+ *
+ * In versions of V8 used in Node v4 and earlier, bound functions have their own
+ * valid JSFunction instance (with shared function info, name, and the usual
+ * properties), and you will be able to load them with v8function_load() (as
+ * well as v8boundfunction_load()).  However, later V8 versions use a separate
+ * JSBoundFunction class.  In these versions, there will not be a JSFunction
+ * instance for bound functions, and you will not be able to load them with
+ * v8function_load().  You can use v8boundfunction_load() in all cases.
+ */
+v8boundfunction_t *v8boundfunction_load(uintptr_t, int);
+uintptr_t v8boundfunction_target(v8boundfunction_t *);
+uintptr_t v8boundfunction_this(v8boundfunction_t *);
+size_t v8boundfunction_nargs(v8boundfunction_t *);
+int v8boundfunction_iter_args(v8boundfunction_t *,
+    int (*)(v8boundfunction_t *, uint_t, uintptr_t, void *), void *);
+void v8boundfunction_free(v8boundfunction_t *);
 
 #endif	/* _MDBV8DBG_H */

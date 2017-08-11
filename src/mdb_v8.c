@@ -5,7 +5,7 @@
  */
 
 /*
- * Copyright (c) 2016, Joyent, Inc.
+ * Copyright (c) 2017, Joyent, Inc.
  */
 
 /*
@@ -125,6 +125,7 @@ intptr_t V8_SmiTagMask;
 intptr_t V8_SmiValueShift;
 intptr_t V8_SmiShiftSize;
 intptr_t V8_PointerSizeLog2;
+intptr_t V8_CompilerHints_BoundFunction;
 
 static intptr_t	V8_ISSHARED_SHIFT;
 static intptr_t	V8_DICT_SHIFT;
@@ -149,6 +150,7 @@ intptr_t V8_TYPE_EXECUTABLEACCESSORINFO = -1;
 intptr_t V8_TYPE_JSOBJECT = -1;
 intptr_t V8_TYPE_JSARRAY = -1;
 intptr_t V8_TYPE_JSFUNCTION = -1;
+intptr_t V8_TYPE_JSBOUNDFUNCTION = -1;
 intptr_t V8_TYPE_JSDATE = -1;
 intptr_t V8_TYPE_JSREGEXP = -1;
 intptr_t V8_TYPE_HEAPNUMBER = -1;
@@ -193,7 +195,11 @@ ssize_t V8_OFF_HEAPOBJECT_MAP;
 ssize_t V8_OFF_JSARRAY_LENGTH;
 ssize_t V8_OFF_JSDATE_VALUE;
 ssize_t V8_OFF_JSREGEXP_DATA;
+ssize_t V8_OFF_JSBOUNDFUNCTION_BOUND_ARGUMENTS;
+ssize_t V8_OFF_JSBOUNDFUNCTION_BOUND_TARGET_FUNCTION;
+ssize_t V8_OFF_JSBOUNDFUNCTION_BOUND_THIS;
 ssize_t V8_OFF_JSFUNCTION_CONTEXT;
+ssize_t V8_OFF_JSFUNCTION_LITERALS_OR_BINDINGS;
 ssize_t V8_OFF_JSFUNCTION_SHARED;
 ssize_t V8_OFF_JSOBJECT_ELEMENTS;
 ssize_t V8_OFF_JSOBJECT_PROPERTIES;
@@ -218,6 +224,7 @@ ssize_t V8_OFF_SEQASCIISTR_CHARS;
 ssize_t V8_OFF_SEQONEBYTESTR_CHARS;
 ssize_t V8_OFF_SEQTWOBYTESTR_CHARS;
 ssize_t V8_OFF_SHAREDFUNCTIONINFO_CODE;
+ssize_t V8_OFF_SHAREDFUNCTIONINFO_COMPILER_HINTS;
 ssize_t V8_OFF_SHAREDFUNCTIONINFO_SCOPE_INFO;
 ssize_t V8_OFF_SHAREDFUNCTIONINFO_END_POSITION;
 ssize_t V8_OFF_SHAREDFUNCTIONINFO_FUNCTION_TOKEN_POSITION;
@@ -428,8 +435,22 @@ static v8_offset_t v8_offsets[] = {
 	    "JSArray", "length" },
 	{ &V8_OFF_JSDATE_VALUE,
 	    "JSDate", "value", B_TRUE },
+
+	{ &V8_OFF_JSBOUNDFUNCTION_BOUND_ARGUMENTS,
+	    "JSBoundFunction", "bound_arguments", B_FALSE,
+	    V8_CONSTANT_ADDED_SINCE(4, 9) },
+	{ &V8_OFF_JSBOUNDFUNCTION_BOUND_TARGET_FUNCTION,
+	    "JSBoundFunction", "bound_target_function", B_FALSE,
+	    V8_CONSTANT_ADDED_SINCE(4, 9) },
+	{ &V8_OFF_JSBOUNDFUNCTION_BOUND_THIS,
+	    "JSBoundFunction", "bound_this", B_FALSE,
+	    V8_CONSTANT_ADDED_SINCE(4, 9) },
+
 	{ &V8_OFF_JSFUNCTION_CONTEXT,
 	    "JSFunction", "context", B_TRUE },
+	{ &V8_OFF_JSFUNCTION_LITERALS_OR_BINDINGS,
+	    "JSFunction", "literals_or_bindings", B_FALSE,
+	    V8_CONSTANT_REMOVED_SINCE(4, 9) },
 	{ &V8_OFF_JSFUNCTION_SHARED,
 	    "JSFunction", "shared" },
 	{ &V8_OFF_JSOBJECT_ELEMENTS,
@@ -494,6 +515,8 @@ static v8_offset_t v8_offsets[] = {
 	    "SeqTwoByteString", "chars", B_TRUE },
 	{ &V8_OFF_SHAREDFUNCTIONINFO_CODE,
 	    "SharedFunctionInfo", "code" },
+	{ &V8_OFF_SHAREDFUNCTIONINFO_COMPILER_HINTS,
+	    "SharedFunctionInfo", "compiler_hints" },
 	{ &V8_OFF_SHAREDFUNCTIONINFO_END_POSITION,
 	    "SharedFunctionInfo", "end_position" },
 	{ &V8_OFF_SHAREDFUNCTIONINFO_FUNCTION_TOKEN_POSITION,
@@ -635,6 +658,7 @@ static int jsobj_print_jsobject(uintptr_t, jsobj_print_t *);
 static int jsobj_print_jsarray(uintptr_t, jsobj_print_t *);
 static int jsobj_print_jstyped_array(uintptr_t, jsobj_print_t *);
 static int jsobj_print_jsfunction(uintptr_t, jsobj_print_t *);
+static int jsobj_print_jsboundfunction(uintptr_t, jsobj_print_t *);
 static int jsobj_print_jsdate(uintptr_t, jsobj_print_t *);
 static int jsobj_print_jsregexp(uintptr_t, jsobj_print_t *);
 
@@ -796,6 +820,13 @@ autoconfigure(v8_cfg_t *cfgp)
 
 		if (strcmp(ep->v8e_name, "JSArray") == 0)
 			V8_TYPE_JSARRAY = ep->v8e_value;
+
+		/*
+		 * JSBoundFunction is only used in relatively modern versions of
+		 * V8 (those used in Node v6 and later).
+		 */
+		if (strcmp(ep->v8e_name, "JSBoundFunction") == 0)
+			V8_TYPE_JSBOUNDFUNCTION = ep->v8e_value;
 
 		if (strcmp(ep->v8e_name, "JSFunction") == 0)
 			V8_TYPE_JSFUNCTION = ep->v8e_value;
@@ -1065,6 +1096,34 @@ again:
 	if (V8_OFF_SHAREDFUNCTIONINFO_IDENTIFIER == -1) {
 		V8_OFF_SHAREDFUNCTIONINFO_IDENTIFIER =
 		    V8_OFF_SHAREDFUNCTIONINFO_INFERRED_NAME;
+	}
+
+	/*
+	 * The appropriate values for the "kBoundFunction" bit that lives within
+	 * the SharedFunctionInfo "compiler_hints" field have changed over time.
+	 * It's unlikely we'll ever have metadata in the binary for this field,
+	 * since current versions of V8 and Node (at least V8 4.9.385 and later
+	 * and Node 6.8 and later) don't use it at all.
+	 *
+	 * Important versions:
+	 *
+	 *	Node	V8
+	 *	0.12.0	3.28.73.0
+	 *	0.12.16	3.28.71.19 (note: earlier V8 than that in v0.12.0)
+	 *	4.0.0	4.5.103.30
+	 *	6.0.0	5.0.71.35 (can detect V8_TYPE_JSBOUNDFUNCTION)
+	 */
+	if (V8_TYPE_JSBOUNDFUNCTION == -1) {
+		if (v8_version_current_older(3, 28, 71, 19)) {
+			/* Node 0.10 */
+			V8_CompilerHints_BoundFunction = 13;
+		} else if (v8_version_current_older(4, 5, 103, 30)) {
+			/* Node 0.12 */
+			V8_CompilerHints_BoundFunction = 8;
+		} else {
+			/* Node v4 */
+			V8_CompilerHints_BoundFunction = 10;
+		}
 	}
 
 	return (failed ? -1 : 0);
@@ -1671,15 +1730,15 @@ read_heap_byte(uint8_t *valp, uintptr_t addr, ssize_t off)
 }
 
 /*
- * This is truly horrific.  Inside the V8 Script class are a number of
- * small-integer fields like the function_token_position (an offset into the
- * script's text where the "function" token appears).  For 32-bit processes, V8
- * stores these as a sequence of SMI fields, which we know how to interpret well
- * enough.  For 64-bit processes, "to avoid wasting space", they use a different
- * trick: each 8-byte word contains two integer fields.  The low word is
- * represented like an SMI: shifted left by one.  They don't bother shifting the
- * high word, since its low bit will never be looked at (since it's not
- * word-aligned).
+ * This is truly horrific.  Inside the V8 Script and SharedFunctionInfo classes
+ * are a number of small-integer fields like the function_token_position (an
+ * offset into the script's text where the "function" token appears).  For
+ * 32-bit processes, V8 stores these as a sequence of SMI fields, which we know
+ * how to interpret well enough.  For 64-bit processes, "to avoid wasting
+ * space", they use a different trick: each 8-byte word contains two integer
+ * fields.  The low word is represented like an SMI: shifted left by one.  They
+ * don't bother shifting the high word, since its low bit will never be looked
+ * at (since it's not word-aligned).
  *
  * This function is used for cases where we would use read_heap_smi(), except
  * that this is one of those fields that might be encoded or might not be,
@@ -1986,7 +2045,19 @@ obj_jstype(uintptr_t addr, char **bufp, size_t *lenp, uint8_t *typep)
 	if (typep)
 		*typep = typebyte;
 
-	typename = enum_lookup_str(v8_types, typebyte, "<unknown>");
+	typename = enum_lookup_str(v8_types, typebyte, NULL);
+
+	/*
+	 * For not-yet-diagnosed reasons, we don't seem to be able to match the
+	 * type byte for various string classes in Node v0.12 and later.
+	 * However, we can tell from the tag which type of string it is, and
+	 * we're generally able to print them.
+	 */
+	if (typename == NULL && V8_TYPE_STRING(typebyte)) {
+		typename = "<unknown subclass>: String";
+	} else if (typename == NULL) {
+		typename = "<unknown>";
+	}
 	(void) bsnprintf(bufp, lenp, typename);
 
 	if (strcmp(typename, "Oddball") == 0) {
@@ -2281,6 +2352,8 @@ jsobj_maybe_garbage(uintptr_t addr)
 	    type != V8_TYPE_JSOBJECT &&
 	    type != V8_TYPE_JSARRAY &&
 	    type != V8_TYPE_JSFUNCTION &&
+	    (V8_TYPE_JSBOUNDFUNCTION == -1 ||
+	    type != V8_TYPE_JSBOUNDFUNCTION) &&
 	    type != V8_TYPE_JSDATE &&
 	    type != V8_TYPE_JSREGEXP &&
 	    type != V8_TYPE_JSTYPEDARRAY)));
@@ -3354,6 +3427,7 @@ jsobj_print_value(v8propvalue_t *valp, jsobj_print_t *jsop)
 		{ "JSArray", jsobj_print_jsarray },
 		{ "JSTypedArray", jsobj_print_jstyped_array },
 		{ "JSFunction", jsobj_print_jsfunction },
+		{ "JSBoundFunction", jsobj_print_jsboundfunction },
 		{ "JSDate", jsobj_print_jsdate },
 		{ "JSRegExp", jsobj_print_jsregexp },
 		{ NULL }
@@ -3744,6 +3818,16 @@ jsobj_print_jsfunction(uintptr_t addr, jsobj_print_t *jsop)
 
 	(void) bsnprintf(bufp, lenp, "function ");
 	return (jsfunc_name(shared, bufp, lenp) != 0);
+}
+
+static int
+jsobj_print_jsboundfunction(uintptr_t addr, jsobj_print_t *jsop)
+{
+	char **bufp = jsop->jsop_bufp;
+	size_t *lenp = jsop->jsop_lenp;
+
+	(void) bsnprintf(bufp, lenp, "<bound function>");
+	return (0);
 }
 
 static int
@@ -4645,6 +4729,7 @@ typedef struct findjsobjects_state {
 	boolean_t fjs_initialized;
 	boolean_t fjs_marking;
 	boolean_t fjs_referred;
+	boolean_t fjs_finished;
 	avl_tree_t fjs_tree;
 	avl_tree_t fjs_referents;
 	avl_tree_t fjs_funcinfo;
@@ -5476,6 +5561,8 @@ findjsobjects_run(findjsobjects_state_t *fjs)
 			sorted[nobjs - 1]->fjso_next = NULL;
 		}
 
+		fjs->fjs_finished = B_TRUE;
+
 		v8_silent--;
 
 		if (fjs->fjs_verbose) {
@@ -5533,6 +5620,12 @@ dcmd_findjsobjects(uintptr_t addr,
 
 	if (findjsobjects_run(fjs) != 0)
 		return (DCMD_ERR);
+
+	if (!fjs->fjs_finished) {
+		mdb_warn("error: previous findjsobjects "
+		    "heap scan did not complete.\n");
+		return (DCMD_ERR);
+	}
 
 	if (listlike && !(flags & DCMD_ADDRSPEC)) {
 		if (propname != NULL || constructor != NULL ||
@@ -5782,6 +5875,88 @@ jsclosure_iter_var(v8scopeinfo_t *sip, v8scopeinfo_var_t *sivp, void *arg)
 
 	mdb_printf("%s\n", buf);
 	return (0);
+}
+
+/* ARGSUSED */
+static int
+jsfunction_bound_arg(v8boundfunction_t *bfp, uint_t which, uintptr_t value,
+    void *unused)
+{
+	char buf[80];
+	size_t len = sizeof (buf);
+	char *bufp;
+
+	bufp = buf;
+	(void) obj_jstype(value, &bufp, &len, NULL);
+
+	mdb_printf("      arg%d  = %p (%s)\n", which, value, buf);
+	return (0);
+}
+
+/* ARGSUSED */
+static int
+dcmd_jsfunction(uintptr_t addr, uint_t flags, int argc, const mdb_arg_t *argv)
+{
+	v8function_t *fp = NULL;
+	v8funcinfo_t *fip = NULL;
+	v8boundfunction_t *bfp = NULL;
+	mdbv8_strbuf_t *strb = NULL;
+	int memflags = UM_SLEEP | UM_GC;
+	int rv = DCMD_ERR;
+	char buf[80];
+	size_t len = sizeof (buf);
+	char *bufp;
+
+	/*
+	 * Bound functions are separate from other functions.  The regular
+	 * function APIs may not work on them, depending on the Node version.
+	 * Handle them first.
+	 * TODO the API here doesn't really allow you to distinguish between
+	 * something like memory allocation failure and bad input (e.g., not a
+	 * bound function).  It was written assuming you would know what type
+	 * you expected something to be, but this is one of the first cases
+	 * where we don't.
+	 */
+	if ((bfp = v8boundfunction_load(addr, memflags)) != NULL) {
+		uintptr_t thisp;
+
+		mdb_printf("bound function that wraps: %p\n",
+		    v8boundfunction_target(bfp));
+		thisp = v8boundfunction_this(bfp);
+		bufp = buf;
+		(void) obj_jstype(thisp, &bufp, &len, NULL);
+		mdb_printf("with \"this\" = %p (%s)\n", thisp, buf);
+		rv = v8boundfunction_iter_args(bfp, jsfunction_bound_arg, NULL);
+		v8boundfunction_free(bfp);
+		return (rv);
+	}
+
+	v8_warnings++;
+	if ((fp = v8function_load(addr, memflags)) == NULL ||
+	    (fip = v8function_funcinfo(fp, memflags)) == NULL ||
+	    (strb = mdbv8_strbuf_alloc(512, memflags)) == NULL) {
+		goto out;
+	}
+
+	mdbv8_strbuf_sprintf(strb, "function: ");
+
+	if (v8funcinfo_funcname(fip, strb, MSF_ASCIIONLY) != 0) {
+		goto out;
+	}
+
+	mdbv8_strbuf_sprintf(strb, "\ndefined at ");
+	(void) v8funcinfo_scriptpath(fip, strb, MSF_ASCIIONLY);
+	mdbv8_strbuf_sprintf(strb, " ");
+	(void) v8funcinfo_definition_location(fip, strb, MSF_ASCIIONLY);
+	mdb_printf("%s\n", mdbv8_strbuf_tocstr(strb));
+	rv = DCMD_OK;
+
+out:
+	v8funcinfo_free(fip);
+	v8function_free(fp);
+	mdbv8_strbuf_free(strb);
+	v8_warnings--;
+	return (rv);
 }
 
 /* ARGSUSED */
@@ -6100,6 +6275,12 @@ dcmd_jsfunctions(uintptr_t addr, uint_t flags, int argc, const mdb_arg_t *argv)
 	if (listlike && !(flags & DCMD_ADDRSPEC) &&
 	    (name != NULL || filename != NULL || instr != 0)) {
 		mdb_warn("cannot specify -l with -n, -f, or -x\n");
+		return (DCMD_ERR);
+	}
+
+	if (!fjs->fjs_finished) {
+		mdb_warn("error: previous findjsobjects "
+		    "heap scan did not complete.\n");
 		return (DCMD_ERR);
 	}
 
@@ -6634,6 +6815,8 @@ static const mdb_dcmd_t v8_mdb_dcmds[] = {
 		dcmd_jsconstructor },
 	{ "jsframe", ":[-aiv] [-f function] [-p property] [-n numlines]",
 		"summarize a JavaScript stack frame", dcmd_jsframe },
+	{ "jsfunction", ":", "print information about a JavaScript function",
+		dcmd_jsfunction },
 	{ "jsprint", ":[-ab] [-d depth] [member]", "print a JavaScript object",
 		dcmd_jsprint },
 	{ "jssource", ":[-n numlines]",

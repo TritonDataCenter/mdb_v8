@@ -5,7 +5,7 @@
  */
 
 /*
- * Copyright (c) 2015, Joyent, Inc.
+ * Copyright (c) 2017, Joyent, Inc.
  */
 
 var assert = require('assert');
@@ -41,7 +41,13 @@ function doStuff(str)
 	return (count);
 }
 
+var bindObject = {
+    '__bind': doStuff.bind({ 'thisObj': true },
+	'arg1value', 'arg2value', 'arg3value', 'arg4value')
+};
+
 doStuff('hello world');
+process.stdout.write(util.format(bindObject).length > 0 ? '' : 'unused');
 
 /*
  * Now we're going to fork ourselves to gcore
@@ -126,6 +132,7 @@ function doCmd(str)
 
 var processors, whichproc;
 var closure;
+var bindPtr;
 
 /*
  * This is effectively a pipeline of command response handlers.  Each one kicks
@@ -243,10 +250,9 @@ processors = [
     function gotScopePtr(chunk) {
     	var ptr = chunk.trim();
 	doCmd(util.format('%s::v8scopeinfo\n', ptr));
-	mdb.stdin.end();
     },
 
-    function last(chunk) {
+    function gotScopeInfo(chunk) {
 	var lines = chunk.split(/\n/);
 	var required = [
 	    /* BEGIN JSSTYLED */
@@ -273,6 +279,86 @@ processors = [
 	});
 
 	assert.deepEqual([], required);
+
+	doCmd(util.format('::findjsobjects -p __bind | ::findjsobjects | ' +
+	    '::jsprint -ad1 __bind\n'));
+    },
+
+    function gotBindCandidates(chunk) {
+	var lines = chunk.split(/\n/);
+	bindPtr = null;
+
+	lines.forEach(function (l) {
+		var parts = l.split(':');
+		if (bindPtr === null && parts.length == 2 &&
+		    /function/.test(parts[1])) {
+			bindPtr = parts[0];
+		}
+	});
+
+	assert.notStrictEqual(null, bindPtr,
+	    'did not find matching pointer');
+
+	doCmd(util.format('%s::jsfunction\n', bindPtr));
+    },
+
+    function gotJsFunction(chunk) {
+	var lines, match, bindTarget, values, cmds;
+	var i;
+
+	lines = chunk.split(/\n/);
+	if (lines.length != 7 ||
+	    !/^bound function that wraps: [a-fA-F0-9]+/.test(lines[0]) ||
+	    !/^with "this" = [a-fA-F0-9]+ \(.*Object\)/.test(lines[1]) ||
+	    !/^      arg0  = [a-fA-F0-9]+ \(.*String\)/.test(lines[2]) ||
+	    !/^      arg1  = [a-fA-F0-9]+ \(.*String\)/.test(lines[3]) ||
+	    !/^      arg2  = [a-fA-F0-9]+ \(.*String\)/.test(lines[4]) ||
+	    !/^      arg3  = [a-fA-F0-9]+ \(.*String\)/.test(lines[5])) {
+		throw (new Error('::jsfunction output mismatch'));
+	}
+
+	match = lines[0].match(/^bound function that wraps: ([a-fA-F0-9]+)/);
+	assert.notStrictEqual(match, null);
+	bindTarget = match[1];
+
+	values = {};
+	for (i = 1; i < 6; i++) {
+		match = lines[i].match(
+		    /* JSSTYLED */
+		    /\s+"?(arg\d+|this)"?\s+= ([a-fA-F0-9]+)/);
+		assert.notStrictEqual(null, match);
+		values[match[1]] = match[2];
+	}
+
+	console.error(values);
+	cmds = [ bindTarget + '::jsfunction' ];
+	Object.keys(values).forEach(function (k) {
+		cmds.push(values[k] + '::jsprint');
+	});
+
+	doCmd(cmds.join(';') + '\n');
+	mdb.stdin.end();
+    },
+
+    function gotJsFunctionValues(chunk) {
+	var lines;
+
+	lines = chunk.split(/\n/);
+	assert.ok(/^defined at.*tst\.jsclosure\.js/.test(lines[1]));
+	lines.splice(1, 1);
+
+	assert.deepEqual(lines, [
+	    'function: doStuff',
+	    '{',
+	    '    "thisObj": true,',
+	    '}',
+	    '"arg1value"',
+	    '"arg2value"',
+	    '"arg3value"',
+	    '"arg4value"',
+	    ''
+	]);
+
 	passed = true;
     }
 ];

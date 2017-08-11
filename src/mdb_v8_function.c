@@ -5,7 +5,7 @@
  */
 
 /*
- * Copyright (c) 2015, Joyent, Inc.
+ * Copyright (c) 2017, Joyent, Inc.
  */
 
 /*
@@ -64,6 +64,45 @@ struct v8scopeinfo {
 	size_t		v8si_nelts;	/* count of slots */
 };
 
+struct v8boundfunction {
+	uintptr_t	v8bf_addr;	/* address of bound function */
+	uintptr_t	v8bf_memflags;	/* memory allocation flags */
+
+	/*
+	 * As mentioned in mdb_v8_dbg.h, earlier versions of V8 use a plain
+	 * JSFunction to represent bound functions.  In those versions, there's
+	 * a "bindings" array that contains the values of the wrapped function,
+	 * "this", and all of the bound arguments.  Newer versions of V8 use a
+	 * separate class for bound functions that has first-class properties
+	 * for these fields.
+	 *
+	 * It's pretty easy to normalize the target function and "this", so we
+	 * do that at load time and store them into v8bf_target and v8bf_this.
+	 */
+	uintptr_t	v8bf_target;	/* target (wrapped) function */
+	uintptr_t	v8bf_this;	/* bound value of "this" */
+
+	/*
+	 * Abstracting over the argument list is only slightly trickier.  In
+	 * both cases, we have a V8 array, but in one case we need to skip the
+	 * first two elements.
+	 */
+	uintptr_t	*v8bf_array;	/* bindings or arguments (see above) */
+	uintptr_t	v8bf_arraylen;	/* length of "v8bf_array" */
+	uintptr_t	v8bf_idx_arg0;	/* first valid argument in */
+					/* "v8bf_args" */
+};
+
+/*
+ * These constants describe the layout of the "bindings" array for bound
+ * functions.  They could in principle come from postmortem metadata, but
+ * they're already obselete in current versions of V8, so it's unlikely they'd
+ * ever come from the binary anyway.
+ */
+static int V8_BINDINGS_INDEX_TARGET = 0;
+static int V8_BINDINGS_INDEX_THIS = 1;
+static int V8_BINDINGS_INDEX_ARGS_START = 2;
+
 /*
  * This structure and array describe the statically-defined fields stored inside
  * each Context.  This is mainly useful for debugger tools that want to dump
@@ -120,6 +159,8 @@ static size_t v8scopeinfo_nvartypes =
 static uintptr_t v8context_elt(v8context_t *, unsigned int);
 static v8scopeinfo_vartype_info_t *v8scopeinfo_vartype_lookup(
     v8scopeinfo_vartype_t);
+static v8boundfunction_t *v8boundfunction_load_bindings(uintptr_t, int);
+static v8boundfunction_t *v8boundfunction_load_direct(uintptr_t, int);
 
 
 /*
@@ -900,7 +941,7 @@ v8scopeinfo_iter_vars(v8scopeinfo_t *sip,
 	nvars = v8scopeinfo_vartype_nvars(sip, scopevartype);
 
 	/*
-	 * Skip to the start of the ScopeInfo's dynamic part. See mdb_v8_db.h
+	 * Skip to the start of the ScopeInfo's dynamic part. See mdb_v8_dbg.h
 	 * for more details on the layout of ScopeInfo objects.
 	 */
 	nskip = V8_SCOPEINFO_IDX_FIRST_VARS;
@@ -998,4 +1039,221 @@ v8scopeinfo_vartype_lookup(v8scopeinfo_vartype_t scopevartype)
 	}
 
 	return (NULL);
+}
+
+
+/*
+ * Bound functions
+ *
+ * Bound functions are functions returned from JavaScript's Function.bind()
+ * method.  A bound function essentially wraps some other function, but
+ * overrides the "this" and any number of initial arguments:
+ *
+ *     function myFunc(arg1, arg2) { ... }
+ *
+ *     var newctx = {};
+ *     var bound = myFunc.bind(newctx, 'hello');
+ *
+ * In this example:
+ *
+ *     "bound" is the bound function.  Invoking it invokes "myFunc".
+ *     "myFunc" is the target function.
+ *     "newctx" is the value of "this" inside the "myFunc" invocation.
+ *
+ * See the comments in mdb_v8_dbg.h and in the definition of "struct
+ * v8boundfunction" above for implementation notes.
+ */
+
+v8boundfunction_t *
+v8boundfunction_load(uintptr_t addr, int memflags)
+{
+	if (V8_TYPE_JSBOUNDFUNCTION == -1) {
+		/*
+		 * This is Node prior to v6.  Load this as a v8function_t and
+		 * use its bindings array.
+		 */
+		return (v8boundfunction_load_bindings(addr, memflags));
+	} else {
+		/*
+		 * This is a more recent version of V8 that stores information
+		 * directly in a JSBoundFunction.
+		 */
+		return (v8boundfunction_load_direct(addr, memflags));
+	}
+}
+
+static v8boundfunction_t *
+v8boundfunction_load_bindings(uintptr_t addr, int memflags)
+{
+	v8function_t *funcp;
+	v8boundfunction_t *bfp;
+	uintptr_t hints, bindingsp;
+	v8funcinfo_t *fip;
+	int err;
+
+	funcp = v8function_load(addr, memflags);
+	if (funcp == NULL) {
+		return (NULL);
+	}
+
+	/*
+	 * To determine whether this is even a bound function, we need to look
+	 * at the compiler hints hanging off the SharedFunctionInfo.
+	 */
+	fip = v8function_funcinfo(funcp, memflags);
+	v8function_free(funcp);
+	if (fip == NULL) {
+		return (NULL);
+	}
+
+	err = read_heap_maybesmi(&hints, fip->v8fi_addr,
+	    V8_OFF_SHAREDFUNCTIONINFO_COMPILER_HINTS);
+	v8funcinfo_free(fip);
+	if (err != 0) {
+		return (NULL);
+	}
+
+	if (!V8_HINT_BOUND(hints)) {
+		v8_warn("%p: not a bound function\n", addr);
+		return (NULL);
+	}
+
+	if (read_heap_ptr(&bindingsp, addr,
+	    V8_OFF_JSFUNCTION_LITERALS_OR_BINDINGS) != 0) {
+		v8_warn("%p: failed to load bindings\n", addr);
+		return (NULL);
+	}
+
+	if ((bfp = mdb_zalloc(sizeof (*bfp), memflags)) == NULL) {
+		return (NULL);
+	}
+
+	bfp->v8bf_addr = addr;
+	bfp->v8bf_memflags = memflags;
+
+	if (read_heap_array(bindingsp, &bfp->v8bf_array,
+	    &bfp->v8bf_arraylen, memflags) != 0) {
+		v8_warn("%p: failed to load bindings array\n", addr);
+		v8boundfunction_free(bfp);
+		return (NULL);
+	}
+
+	if (bfp->v8bf_arraylen < V8_BINDINGS_INDEX_ARGS_START) {
+		v8_warn("%p: bindings array is too short\n", addr);
+		v8boundfunction_free(bfp);
+		return (NULL);
+	}
+
+	bfp->v8bf_target = bfp->v8bf_array[V8_BINDINGS_INDEX_TARGET];
+	bfp->v8bf_this = bfp->v8bf_array[V8_BINDINGS_INDEX_THIS];
+	bfp->v8bf_idx_arg0 = V8_BINDINGS_INDEX_ARGS_START;
+	return (bfp);
+}
+
+static v8boundfunction_t *
+v8boundfunction_load_direct(uintptr_t addr, int memflags)
+{
+	uint8_t type;
+	uintptr_t boundArgs;
+	v8boundfunction_t *bfp;
+
+	assert(V8_TYPE_JSBOUNDFUNCTION != -1);
+
+	if (!V8_IS_HEAPOBJECT(addr) || read_typebyte(&type, addr) != 0) {
+		v8_warn("%p: not a heap object\n", addr);
+		return (NULL);
+	}
+
+	if (type != V8_TYPE_JSBOUNDFUNCTION) {
+		v8_warn("%p: not a JSBoundFunction\n", addr);
+		return (NULL);
+	}
+
+	if ((bfp = mdb_zalloc(sizeof (*bfp), memflags)) == NULL) {
+		return (NULL);
+	}
+
+	if (read_heap_ptr(&bfp->v8bf_target, addr,
+	    V8_OFF_JSBOUNDFUNCTION_BOUND_TARGET_FUNCTION) == -1 ||
+	    read_heap_ptr(&bfp->v8bf_this, addr,
+	    V8_OFF_JSBOUNDFUNCTION_BOUND_THIS) == -1 ||
+	    read_heap_ptr(&boundArgs, addr,
+	    V8_OFF_JSBOUNDFUNCTION_BOUND_ARGUMENTS) == -1 ||
+	    read_heap_array(boundArgs, &bfp->v8bf_array,
+	    &bfp->v8bf_arraylen, memflags) == -1) {
+		v8_warn("%p: failed to read binding details\n", addr);
+		v8boundfunction_free(bfp);
+		return (NULL);
+	}
+
+	bfp->v8bf_addr = addr;
+	bfp->v8bf_memflags = memflags;
+	return (bfp);
+}
+
+/*
+ * Returns the target of this bound function (i.e., the function that this
+ * function wraps).
+ */
+uintptr_t
+v8boundfunction_target(v8boundfunction_t *bfp)
+{
+	return (bfp->v8bf_target);
+}
+
+/*
+ * Returns the value of "this" specified by this binding.
+ */
+uintptr_t
+v8boundfunction_this(v8boundfunction_t *bfp)
+{
+	return (bfp->v8bf_this);
+}
+
+/*
+ * Returns the number of arguments specified by this binding.
+ */
+size_t
+v8boundfunction_nargs(v8boundfunction_t *bfp)
+{
+	return (bfp->v8bf_arraylen - bfp->v8bf_idx_arg0);
+}
+
+/*
+ * Iterates the arguments specified by this binding.
+ */
+int
+v8boundfunction_iter_args(v8boundfunction_t *bfp,
+    int (*func)(v8boundfunction_t *, uint_t, uintptr_t, void *), void *arg)
+{
+	size_t argi, elti;
+	int rv = 0;
+
+	for (argi = 0, elti = bfp->v8bf_idx_arg0;
+	    elti < bfp->v8bf_arraylen; argi++, elti++) {
+		rv = func(bfp, argi, bfp->v8bf_array[elti], arg);
+		if (rv != 0) {
+			return (rv);
+		}
+	}
+
+	assert(argi == v8boundfunction_nargs(bfp));
+	return (0);
+}
+
+/*
+ * Free a v8boundfunction_t object.
+ * See the patterns in mdb_v8_dbg.h for interface details.
+ */
+void
+v8boundfunction_free(v8boundfunction_t *bfp)
+{
+	if (bfp == NULL) {
+		return;
+	}
+
+	maybefree(bfp->v8bf_array,
+	    bfp->v8bf_arraylen * sizeof (bfp->v8bf_array[0]),
+	    bfp->v8bf_memflags);
+	maybefree(bfp, sizeof (*bfp), bfp->v8bf_memflags);
 }

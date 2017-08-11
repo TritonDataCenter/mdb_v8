@@ -10,7 +10,7 @@ set -o pipefail
 #
 # Static configuration: Node versions to setup and test.
 #
-rn_versions="0.10.43 0.12.12 4.4.0 5.9.0 6.0.0 6.6.0 6.9.4 7.4.0"
+rn_versions="0.10.48 0.12.17 4.8.4 6.11.2"
 rn_platform="sunos"
 rn_arches="x86 x64"
 rn_nodebase="https://nodejs.org/dist"

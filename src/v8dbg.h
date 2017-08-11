@@ -5,7 +5,7 @@
  */
 
 /*
- * Copyright (c) 2015, Joyent, Inc.
+ * Copyright (c) 2017, Joyent, Inc.
  */
 
 /*
@@ -42,6 +42,14 @@
 #define	V8_SMI_VALUE(smi)	((smi) >> (V8_SmiValueShift + V8_SmiShiftSize))
 #define	V8_VALUE_SMI(value)	\
 	((value) << (V8_SmiValueShift + V8_SmiShiftSize))
+
+/*
+ * Check compiler hints, which hang off of SharedFunctionInfo objects.
+ */
+#define	V8_HINT_ISSET(hints, whichbit) \
+	(((hints) & (1 << (whichbit))) != 0)
+#define	V8_HINT_BOUND(hints) \
+	(V8_HINT_ISSET((hints), V8_CompilerHints_BoundFunction))
 
 /*
  * Determine the encoding and representation of a V8 string.

@@ -5,7 +5,7 @@
 -->
 
 <!--
-    Copyright (c) 2015, Joyent, Inc.
+    Copyright (c) 2017, Joyent, Inc.
 -->
 
 # Postmortem debugging with mdb_v8
@@ -558,7 +558,7 @@ constructor, respectively.  The output consists of only the representative
 objects.
 
 Option summary:
-  
+
     -b       Include the heap denoted by the brk(2) (normally excluded)
     -c cons  Display representative objects with the specified constructor
     -p prop  Display representative objects that have the specified property
@@ -615,6 +615,7 @@ like `type` and `listener`.  The `jsclosure` command prints these out:
 
 Of course, you can use other commands to inspect these values further.
 
+See also: `jsfunction`
 
 ### jsconstructor
 
@@ -623,6 +624,8 @@ Of course, you can use other commands to inspect these values further.
 Given an object identified by `addr`, print the name of the JavaScript function
 that was used as the object's constructor.  With -v, provides the constructor
 function's underlying V8 heap object address for use with `v8function`.
+
+See also: `jsfunction`
 
 ### jsframe
 
@@ -636,6 +639,38 @@ previous frame, the function name cannot be printed when using "-i".
 
 The "-a", "-v", "-f", "-p", and "-n" arguments are exactly the same as for
 `jsstack`.
+
+
+### jsfunction
+
+    addr::jsfunction
+
+Given a function instance identified by the address `addr`, print out
+information about the function.  For most functions, this includes the
+function's name and where it was defined:
+
+    > b17812f5::jsfunction
+    function: afunc
+    defined at /home/dap/mdb_v8/bound.js line 5
+
+For functions created with JavaScript's `Function.bind`, this command instead
+prints out information about the _target_ function (the one that was wrapped
+with `bind`):
+
+    > a8781389::jsfunction
+    bound function that wraps: a87812cd
+    with "this" = a878135d (JSObject: Object)
+          arg0  = 80527875 (SeqAsciiString)
+
+You can use `jsfunction` again on the target function (e.g., `a87812cd` in this
+case) to see information about the underlying function.
+
+See also:
+
+- `jsclosure` for printing out closure variables for this function.
+- `jssource` for printing the source code for this function.
+- `jsprint` for printing the values for "this" and the arguments for bound
+   functions.
 
 
 ### jsfunctions
