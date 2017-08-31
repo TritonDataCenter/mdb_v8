@@ -5,7 +5,7 @@
 -->
 
 <!--
-    Copyright (c) 2015, Joyent, Inc.
+    Copyright (c) 2017, Joyent, Inc.
 -->
 
 # mdb_v8 changelog
@@ -13,6 +13,13 @@
 ## Unreleased changes
 
 None.
+
+## v1.2.0 (2017-08-31)
+
+* #44 want "jsfunction" dcmd
+* #88 want better support for bound functions
+* #91 CTRL+C of ::findjsobjects, followed by ::findjsobjects reports only some objects
+* #85 missing dependency for mdb\_v8\_version.c leads to build failure
 
 ## v1.1.4 (2017-01-30)
 
