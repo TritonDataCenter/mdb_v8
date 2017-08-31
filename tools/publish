@@ -153,7 +153,7 @@ function pub_sanity_check_file
 	tmpfile=/var/tmp/mdbv8publish.$$
 	rm -f /var/tmp/mdbv8publish.$$
 	echo -n "Checking for release tag on "$file" ... "
-	mdb -e '::load '"$file"'; !touch '"$tmpfile"'; ! sleep 300' \
+	mdb -S -e '::load '"$file"'; !touch '"$tmpfile"'; ! sleep 300' \
 	    "$file" > /dev/null 2>&1 &
 	pid="$!"
 	for (( i = 0; i < 30; i++ )) {
@@ -165,7 +165,7 @@ function pub_sanity_check_file
 	}
 	[[ -f "$tmpfile" ]] || fail "failed"
 	rm -f "$tmpfile"
-	tag="$(mdb -p "$pid" -e '*mdbv8_vers_tag/s' | awk '{print $2}' |
+	tag="$(mdb -S -p "$pid" -e '*mdbv8_vers_tag/s' | awk '{print $2}' |
 	    sed -e s'#,##g')"
 	kill "$pid" > /dev/null 2>&1
 	echo "\"$tag\""

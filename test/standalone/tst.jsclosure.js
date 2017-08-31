@@ -108,7 +108,11 @@ gcore.on('exit', function (code) {
 		console.log('mdb stderr: ' + data);
 	});
 
-	var mod = util.format('::load %s\n', common.dmodpath());
+	/*
+	 * The '1000$w' sets the terminal width to a large value to keep MDB
+	 * from inserting newlines at the default 80 columns.
+	 */
+	var mod = util.format('1000$w; ::load %s\n', common.dmodpath());
 	doCmd(mod);
 });
 
