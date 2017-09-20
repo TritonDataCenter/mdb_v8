@@ -677,7 +677,7 @@ v8context_var_value(v8context_t *ctxp, unsigned int i, uintptr_t *valptr)
 	unsigned int idx;
 
 	idx = i + V8_CONTEXT_NCOMMON;
-	if (i >= ctxp->v8ctx_nelts) {
+	if (idx >= ctxp->v8ctx_nelts) {
 		v8_warn("context %p: variable index %d is out of range\n",
 		    ctxp->v8ctx_addr, i);
 		return (-1);

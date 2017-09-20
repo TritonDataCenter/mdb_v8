@@ -14,6 +14,10 @@
 
 None.
 
+## v1.2.1 (2017-09-20)
+
+* #96 jsclosure crash on invalid context index
+
 ## v1.2.0 (2017-08-31)
 
 * #44 want "jsfunction" dcmd
