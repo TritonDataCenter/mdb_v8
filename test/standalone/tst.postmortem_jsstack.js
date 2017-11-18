@@ -5,7 +5,7 @@
  */
 
 /*
- * Copyright (c) 2015, Joyent, Inc.
+ * Copyright (c) 2017, Joyent, Inc.
  */
 
 var common = require('./common');
@@ -113,6 +113,16 @@ dtrace.on('exit', function (code) {
 
 		for (var i = 0; i < lines.length; i++) {
 			var line = lines[i];
+
+			/*
+			 * Some later versions of node, beginning with v6, have
+			 * an additional JS stack frame for os.loadavg().
+			 * Ignore this frame.
+			 */
+			if ((line.indexOf(sentinel) !== -1) &&
+			    (line.indexOf('loadavg') !== -1)) {
+				continue;
+			}
 
 			if (matched == 1 && line.indexOf(arg1) === 0) {
 				straddr =
