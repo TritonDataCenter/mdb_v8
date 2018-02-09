@@ -5,7 +5,7 @@
  */
 
 /*
- * Copyright (c) 2017, Joyent, Inc.
+ * Copyright (c) 2018, Joyent, Inc.
  */
 
 /*
@@ -2744,7 +2744,8 @@ jsobj_properties(uintptr_t addr,
 	 * of instance descriptors.
 	 */
 	for (ii = 0; ii < rndescs; ii++) {
-		intptr_t keyidx, validx, detidx, baseidx, propaddr, propidx;
+		intptr_t keyidx, validx, detidx, baseidx, propaddr;
+		intptr_t propidx, proparrayidx = -1;
 		char buf[1024];
 		intptr_t val;
 		size_t len = sizeof (buf);
@@ -2783,8 +2784,9 @@ jsobj_properties(uintptr_t addr,
 		 * (notably: transitions) that we don't care about (and these
 		 * are not errors).
 		 */
-		if (!V8_DESC_ISFIELD(content[detidx]))
+		if (!V8_DESC_ISFIELD(content[detidx])) {
 			continue;
+		}
 
 		if (keyidx >= ndescs) {
 			propinfo |= JPI_SKIPPED;
@@ -2840,6 +2842,14 @@ jsobj_properties(uintptr_t addr,
 				/* The property is stored inside the object. */
 				propaddr = addr + V8_OFF_HEAP(
 				    size - (ninprops - propidx) * ps);
+			} else {
+				/*
+				 * The property is stored in the "properties"
+				 * array.  This will be handled below.  The
+				 * index needs to be offset by the number of
+				 * in-object properties.
+				 */
+				proparrayidx = propidx - ninprops;
 			}
 		} else {
 			/*
@@ -2870,6 +2880,8 @@ jsobj_properties(uintptr_t addr,
 				 */
 				propaddr = addr +
 				    V8_OFF_HEAP(size + propidx * ps);
+			} else {
+				proparrayidx = propidx;
 			}
 		}
 
@@ -2887,9 +2899,9 @@ jsobj_properties(uintptr_t addr,
 			}
 
 			propinfo |= JPI_INOBJECT;
-		} else if (propidx >= 0 && propidx < nprops) {
+		} else if (proparrayidx >= 0 && proparrayidx < nprops) {
 			/* Valid "properties" array property found. */
-			ptr = props[propidx];
+			ptr = props[proparrayidx];
 			propinfo |= JPI_PROPS;
 		} else {
 			/*
@@ -3727,15 +3739,37 @@ jsobj_print_jsarray_member(uintptr_t addr, jsobj_print_t *jsop)
 }
 
 static int
+jsobj_print_jsarray_one(v8array_t *ap, unsigned int index,
+    uintptr_t value, void *uarg)
+{
+	jsobj_print_t *jsop = uarg;
+	char **bufp = jsop->jsop_bufp;
+	size_t *lenp = jsop->jsop_lenp;
+
+	if (v8array_length(ap) == 1) {
+		(void) jsobj_print(value, jsop);
+	} else {
+		if (*lenp <= 0) {
+			return (-1);
+		}
+
+		(void) bsnprintf(bufp, lenp, "%*s", jsop->jsop_indent, "");
+		(void) jsobj_print(value, jsop);
+		(void) bsnprintf(bufp, lenp, ",\n");
+	}
+
+	return (0);
+}
+
+static int
 jsobj_print_jsarray(uintptr_t addr, jsobj_print_t *jsop)
 {
 	char **bufp = jsop->jsop_bufp;
 	size_t *lenp = jsop->jsop_lenp;
 	int indent = jsop->jsop_indent;
 	jsobj_print_t descend;
-	uintptr_t ptr;
-	uintptr_t *elts;
-	size_t ii, len;
+	size_t len;
+	v8array_t *ap;
 
 	if (jsop->jsop_member != NULL)
 		return (jsobj_print_jsarray_member(addr, jsop));
@@ -3745,18 +3779,14 @@ jsobj_print_jsarray(uintptr_t addr, jsobj_print_t *jsop)
 		return (0);
 	}
 
-	if (read_heap_ptr(&ptr, addr, V8_OFF_JSOBJECT_ELEMENTS) != 0) {
-		(void) bsnprintf(bufp, lenp,
-		    "<array (failed to read elements)>");
+	ap = v8array_load(addr, UM_NOSLEEP);
+	if (ap == NULL) {
 		return (-1);
 	}
 
-	if (read_heap_array(ptr, &elts, &len, UM_SLEEP | UM_GC) != 0) {
-		(void) bsnprintf(bufp, lenp, "<array (failed to read array)>");
-		return (-1);
-	}
-
+	len = v8array_length(ap);
 	if (len == 0) {
+		v8array_free(ap);
 		(void) bsnprintf(bufp, lenp, "[]");
 		return (0);
 	}
@@ -3767,22 +3797,18 @@ jsobj_print_jsarray(uintptr_t addr, jsobj_print_t *jsop)
 
 	if (len == 1) {
 		(void) bsnprintf(bufp, lenp, "[ ");
-		(void) jsobj_print(elts[0], &descend);
+		(void) v8array_iter_elements(ap, jsobj_print_jsarray_one,
+		    &descend);
 		(void) bsnprintf(bufp, lenp, " ]");
+		v8array_free(ap);
 		return (0);
 	}
 
 	(void) bsnprintf(bufp, lenp, "[\n");
-
-	for (ii = 0; ii < len && *lenp > 0; ii++) {
-		(void) bsnprintf(bufp, lenp, "%*s", indent + 4, "");
-		(void) jsobj_print(elts[ii], &descend);
-		(void) bsnprintf(bufp, lenp, ",\n");
-	}
-
+	(void) v8array_iter_elements(ap, jsobj_print_jsarray_one, &descend);
 	(void) bsnprintf(bufp, lenp, "%*s", indent, "");
 	(void) bsnprintf(bufp, lenp, "]");
-
+	v8array_free(ap);
 	return (0);
 }
 
@@ -5959,6 +5985,44 @@ out:
 	return (rv);
 }
 
+static int
+jsarray_print_one(v8array_t *ap, unsigned int index, uintptr_t value,
+    void *uarg)
+{
+	boolean_t *opt_i = uarg;
+
+	if (*opt_i) {
+		mdb_printf("%d ", index);
+	}
+
+	mdb_printf("%p\n", value);
+	return (0);
+}
+
+/* ARGSUSED */
+static int
+dcmd_jsarray(uintptr_t addr, uint_t flags, int argc, const mdb_arg_t *argv)
+{
+	v8array_t *ap;
+	int memflags = UM_SLEEP | UM_GC;
+	boolean_t opt_i = B_FALSE;
+	int rv;
+
+	if (mdb_getopts(argc, argv, 'i', MDB_OPT_SETBITS, B_TRUE, &opt_i,
+	    NULL) != argc) {
+		return (DCMD_USAGE);
+	}
+
+	if ((ap = v8array_load(addr, memflags)) == NULL) {
+		mdb_warn("%p: failed to load JSArray\n", addr);
+		return (DCMD_ERR);
+	}
+
+	rv = v8array_iter_elements(ap, jsarray_print_one, &opt_i);
+	v8array_free(ap);
+	return (rv == 0 ? DCMD_OK : DCMD_ERR);
+}
+
 /* ARGSUSED */
 static int
 dcmd_jsclosure(uintptr_t addr, uint_t flags, int argc, const mdb_arg_t *argv)
@@ -6496,24 +6560,57 @@ dcmd_v8field(uintptr_t addr, uint_t flags, int argc, const mdb_arg_t *argv)
 
 /* ARGSUSED */
 static int
+v8array_print_one(v8fixedarray_t *arrayp, unsigned int i,
+    uintptr_t value, void *unused)
+{
+	mdb_printf("%p\n", value);
+	return (0);
+}
+
+/* ARGSUSED */
+static int
 dcmd_v8array(uintptr_t addr, uint_t flags, int argc, const mdb_arg_t *argv)
 {
 	v8fixedarray_t *arrayp;
-	uintptr_t *elts;
-	size_t i, len;
+	boolean_t immediate = B_FALSE;
+	int rv;
+
+	/*
+	 * The "immediate" option causes us to load the entire array into
+	 * memory.  This is likely only useful for testing.
+	 */
+	if (mdb_getopts(argc, argv,
+	    'i', MDB_OPT_SETBITS, B_TRUE, &immediate, NULL) != argc) {
+		return (DCMD_USAGE);
+	}
 
 	if ((arrayp = v8fixedarray_load(addr, UM_SLEEP | UM_GC)) == NULL) {
 		return (DCMD_ERR);
 	}
 
-	elts = v8fixedarray_elts(arrayp);
-	len = v8fixedarray_length(arrayp);
+	if (!immediate) {
+		rv = v8fixedarray_iter_elements(
+		    arrayp, v8array_print_one, NULL);
+	} else {
+		unsigned int i, len;
+		uintptr_t *immed;
 
-	for (i = 0; i < len; i++)
-		mdb_printf("%p\n", elts[i]);
+		len = v8fixedarray_length(arrayp);
+		immed = v8fixedarray_as_array(arrayp, UM_SLEEP | UM_GC);
+		if (immed == 0) {
+			rv = -1;
+		} else {
+			rv = 0;
+			for (i = 0; i < len; i++) {
+				mdb_printf("%p\n", immed[i]);
+			}
+			maybefree(immed, len * sizeof (immed[0]),
+			    UM_SLEEP | UM_GC);
+		}
+	}
 
 	v8fixedarray_free(arrayp);
-	return (DCMD_OK);
+	return (rv == 0 ? DCMD_OK : DCMD_ERR);
 }
 
 /* ARGSUSED */
@@ -6666,6 +6763,83 @@ dcmd_v8warnings(uintptr_t addr, uint_t flags, int argc, const mdb_arg_t *argv)
 	return (DCMD_OK);
 }
 
+typedef struct jselement_walk_data {
+	mdb_walk_state_t *jsew_wsp;
+	int		 jsew_memflags;
+	int		 jsew_last;
+	v8array_t	 *jsew_array;
+} jselement_walk_data_t;
+
+static int
+walk_jselement_init(mdb_walk_state_t *wsp)
+{
+	uintptr_t addr;
+	int memflags = UM_GC | UM_SLEEP;
+	jselement_walk_data_t *jsew;
+
+	if ((addr = wsp->walk_addr) == NULL) {
+		mdb_warn("'jselement' does not support global walks\n");
+		return (WALK_ERR);
+	}
+
+	jsew = mdb_zalloc(sizeof (*jsew), memflags);
+	assert(jsew != NULL); /* using UM_SLEEP */
+	jsew->jsew_wsp = wsp;
+	jsew->jsew_memflags = memflags;
+	jsew->jsew_last = WALK_DONE;
+	jsew->jsew_array = v8array_load(addr, memflags);
+
+	if (jsew->jsew_array == NULL) {
+		maybefree(jsew, sizeof (*jsew), memflags);
+		return (WALK_ERR);
+	}
+
+	wsp->walk_data = jsew;
+	return (WALK_NEXT);
+}
+
+/* ARGSUSED */
+static int
+walk_jsarray_iter_one(v8array_t *ap, unsigned int index, uintptr_t value,
+    void *uarg)
+{
+	jselement_walk_data_t *jsew = uarg;
+	mdb_walk_state_t *wsp = jsew->jsew_wsp;
+
+	jsew->jsew_last = wsp->walk_callback(value, NULL, wsp->walk_cbdata);
+	return (jsew->jsew_last == WALK_NEXT ? 0 : -1);
+}
+
+static int
+walk_jselement_step(mdb_walk_state_t *wsp)
+{
+	jselement_walk_data_t *jsew;
+	v8array_t *ap;
+	int rv;
+
+	jsew = wsp->walk_data;
+	assert(jsew->jsew_wsp == wsp);
+	ap = jsew->jsew_array;
+	rv = v8array_iter_elements(ap, walk_jsarray_iter_one, jsew);
+	return (rv == 0 ? WALK_DONE : jsew->jsew_last);
+}
+
+static void
+walk_jselement_fini(mdb_walk_state_t *wsp)
+{
+	jselement_walk_data_t *jsew;
+	v8array_t *ap;
+
+	assert(wsp->walk_data != NULL);
+	jsew = wsp->walk_data;
+	assert(jsew->jsew_wsp == wsp);
+	wsp->walk_data = NULL;
+
+	ap = jsew->jsew_array;
+	v8array_free(ap);
+	maybefree(jsew, sizeof (*jsew), jsew->jsew_memflags);
+}
+
 static int
 walk_jsframes_init(mdb_walk_state_t *wsp)
 {
@@ -6808,6 +6982,8 @@ static const mdb_dcmd_t v8_mdb_dcmds[] = {
 	/*
 	 * Commands to inspect JavaScript-level state
 	 */
+	{ "jsarray", ":[-i]", "print elements of a JavaScript array",
+		dcmd_jsarray },
 	{ "jsclosure", ":", "print variables referenced by a closure",
 		dcmd_jsclosure },
 	{ "jsconstructor", ":[-v]",
@@ -6833,7 +7009,7 @@ static const mdb_dcmd_t v8_mdb_dcmds[] = {
 	/*
 	 * Commands to inspect V8-level state
 	 */
-	{ "v8array", ":", "print elements of a V8 FixedArray",
+	{ "v8array", ":[-i]", "print elements of a V8 FixedArray",
 		dcmd_v8array },
 	{ "v8classes", NULL, "list known V8 heap object C++ classes",
 		dcmd_v8classes },
@@ -6868,6 +7044,8 @@ static const mdb_dcmd_t v8_mdb_dcmds[] = {
 };
 
 static const mdb_walker_t v8_mdb_walkers[] = {
+	{ "jselement", "walk elements of a JavaScript array",
+		walk_jselement_init, walk_jselement_step, walk_jselement_fini },
 	{ "jsframe", "walk V8 JavaScript stack frames",
 		walk_jsframes_init, walk_jsframes_step },
 	{ "jsprop", "walk property values for an object",

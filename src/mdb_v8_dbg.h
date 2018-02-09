@@ -5,7 +5,7 @@
  */
 
 /*
- * Copyright (c) 2017, Joyent, Inc.
+ * Copyright (c) 2018, Joyent, Inc.
  */
 
 /*
@@ -98,6 +98,7 @@ typedef struct {
 typedef struct v8fixedarray v8fixedarray_t;
 typedef struct v8string v8string_t;
 
+typedef struct v8array v8array_t;
 typedef struct v8function v8function_t;
 typedef struct v8boundfunction v8boundfunction_t;
 typedef struct v8code v8code_t;
@@ -156,6 +157,16 @@ size_t mdbv8_strbuf_nbytesforchar(uint16_t, mdbv8_strappend_flags_t);
 
 
 /*
+ * Working with JavaScript arrays.
+ */
+v8array_t *v8array_load(uintptr_t, int);
+void v8array_free(v8array_t *);
+size_t v8array_length(v8array_t *);
+int v8array_iter_elements(v8array_t *,
+    int (*)(v8array_t *, unsigned int, uintptr_t, void *), void *);
+
+
+/*
  * Working with V8 FixedArrays.  These are plain arrays used within V8 for a
  * variety of higher-level structures.  Most of these structures apply their own
  * semantics to the elements of the array.  Contexts and ScopeInfos are examples
@@ -165,7 +176,9 @@ size_t mdbv8_strbuf_nbytesforchar(uint16_t, mdbv8_strappend_flags_t);
 v8fixedarray_t *v8fixedarray_load(uintptr_t, int);
 void v8fixedarray_free(v8fixedarray_t *);
 
-uintptr_t *v8fixedarray_elts(v8fixedarray_t *);
+int v8fixedarray_iter_elements(v8fixedarray_t *,
+    int (*)(v8fixedarray_t *, unsigned int, uintptr_t, void *), void *);
+uintptr_t *v8fixedarray_as_array(v8fixedarray_t *, int);
 size_t v8fixedarray_length(v8fixedarray_t *);
 
 

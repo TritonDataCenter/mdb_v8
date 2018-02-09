@@ -1,0 +1,10 @@
+{
+	"name": "mdb_v8_deps",
+	"version": "1.0.0",
+	"description": "package used only to install devDependencies for mdb_v8",
+	"private": true,
+	"devDependencies": {
+		"vasync": "^2.2.0",
+		"verror": "^1.10.0"
+	}
+}

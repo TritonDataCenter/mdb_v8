@@ -5,20 +5,27 @@
  */
 
 /*
- * Copyright (c) 2017, Joyent, Inc.
+ * Copyright (c) 2018, Joyent, Inc.
  */
 
 var assert = require('assert');
+var childprocess = require('child_process');
 var os = require('os');
 var path = require('path');
 var util = require('util');
 
 var common = require('./common');
+
 var getRuntimeVersions = require('../lib/runtime-versions').getRuntimeVersions;
 var compareV8Versions = require('../lib/runtime-versions').compareV8Versions;
 
+var gcoreSelf = require('./gcore_self');
+
 var RUNTIME_VERSIONS = getRuntimeVersions();
 var V8_VERSION = RUNTIME_VERSIONS.V8;
+var to, passed, mdb;
+var output = '';
+var sentinel = 'SENTINEL\n';
 
 /*
  * We're going to look for this function in ::jsfunctions.
@@ -47,42 +54,25 @@ var bindObject = {
 };
 
 doStuff('hello world');
-process.stdout.write(util.format(bindObject).length > 0 ? '' : 'unused');
-
-/*
- * Now we're going to fork ourselves to gcore
- */
-var spawn = require('child_process').spawn;
-var prefix = '/var/tmp/node';
-var corefile = prefix + '.' + process.pid;
-var gcore = spawn('gcore', [ '-o', prefix, process.pid + '' ]);
-var output = '';
-var unlinkSync = require('fs').unlinkSync;
-var args = [ '-S', corefile ];
-var sentinel = 'SENTINEL\n';
-var mdb;
-var passed;
-var to;
 
 process.on('exit', function () {
 	assert.ok(passed);
 	console.error('test passed');
 });
 
-if (process.env.MDB_LIBRARY_PATH && process.env.MDB_LIBRARY_PATH != '')
-	args = args.concat([ '-L', process.env.MDB_LIBRARY_PATH ]);
+gcoreSelf(function onGcore(err, corefile) {
+	var unlinkSync = require('fs').unlinkSync;
+	var args = [ '-S', corefile ];
 
-gcore.stderr.on('data', function (data) {
-	console.log('gcore: ' + data);
-});
-
-gcore.on('exit', function (code) {
-	if (code != 0) {
-		console.error('gcore exited with code ' + code);
-		process.exit(code);
+	if (err) {
+		console.error('failed to gcore self: %s', err.message);
+		process.exit(1);
 	}
 
-	mdb = spawn('mdb', args, { stdio: 'pipe' });
+	if (process.env.MDB_LIBRARY_PATH && process.env.MDB_LIBRARY_PATH != '')
+		args = args.concat([ '-L', process.env.MDB_LIBRARY_PATH ]);
+
+	mdb = childprocess.spawn('mdb', args, { stdio: 'pipe' });
 
 	mdb.on('exit', function (code2) {
 		var retained = '; core retained as ' + corefile;
@@ -150,6 +140,8 @@ processors = [
 
     function gotClosurePointer(chunk) {
 	closure = chunk.trim();
+	assert.ok(closure.length > 0,
+	    'did not find expected closure "myClosure"');
 	doCmd(util.format('%s::jsclosure\n', closure));
     },
 

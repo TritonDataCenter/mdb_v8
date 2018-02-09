@@ -5,7 +5,7 @@
  */
 
 /*
- * Copyright (c) 2017, Joyent, Inc.
+ * Copyright (c) 2018, Joyent, Inc.
  */
 
 /*
@@ -435,6 +435,7 @@ v8funcinfo_definition_location(v8funcinfo_t *fip, mdbv8_strbuf_t *strb,
 	uintptr_t tokpos, lower, upper, i;
 	uintptr_t *data;
 	v8fixedarray_t *arrayp;
+	int memflags;
 
 	/*
 	 * The "function" token position is an SMI, and has already been decoded
@@ -467,12 +468,24 @@ v8funcinfo_definition_location(v8funcinfo_t *fip, mdbv8_strbuf_t *strb,
 		return (0);
 	}
 
-	arrayp = v8fixedarray_load(fip->v8fi_line_endings, UM_NOSLEEP);
+	memflags = UM_NOSLEEP;
+	arrayp = v8fixedarray_load(fip->v8fi_line_endings, memflags);
 	if (arrayp == NULL) {
 		return (-1);
 	}
 
-	data = v8fixedarray_elts(arrayp);
+	if (v8fixedarray_length(arrayp) == 0) {
+		mdbv8_strbuf_sprintf(strb, "position out of range");
+		v8fixedarray_free(arrayp);
+		return (0);
+	}
+
+	data = v8fixedarray_as_array(arrayp, memflags);
+	if (data == NULL) {
+		v8fixedarray_free(arrayp);
+		return (-1);
+	}
+
 	lower = 0;
 	upper = v8fixedarray_length(arrayp) - 1;
 	if (tokpos > data[upper]) {
@@ -494,6 +507,8 @@ v8funcinfo_definition_location(v8funcinfo_t *fip, mdbv8_strbuf_t *strb,
 		mdbv8_strbuf_sprintf(strb, "line %d", i + 1);
 	}
 
+	maybefree(data, sizeof (data[0]) * v8fixedarray_length(arrayp),
+	    memflags);
 	v8fixedarray_free(arrayp);
 	return (0);
 }

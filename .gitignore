@@ -1,2 +1,4 @@
 build
+node_modules
+make_stamps
 tools/mdbv8diff/node_modules

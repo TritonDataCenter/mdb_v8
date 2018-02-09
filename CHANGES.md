@@ -5,7 +5,7 @@
 -->
 
 <!--
-    Copyright (c) 2017, Joyent, Inc.
+    Copyright (c) 2018, Joyent, Inc.
 -->
 
 # mdb_v8 changelog
@@ -13,6 +13,12 @@
 ## Unreleased changes
 
 None.
+
+## v1.3.0 (2018-01)
+
+* #27 want streaming way to iterate array elements
+* #100 jsprint shows more "hole" values than it should
+* #101 test suite could use common mechanism for standalone tests
 
 ## v1.2.1 (2017-09-20)
 

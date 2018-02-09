@@ -5,11 +5,12 @@
  */
 
 /*
- * Copyright (c) 2015, Joyent, Inc.
+ * Copyright (c) 2018, Joyent, Inc.
  */
 
 
 var assert = require('assert');
+var childprocess = require('child_process');
 var os = require('os');
 var path = require('path');
 var util = require('util');
@@ -21,6 +22,8 @@ var getRuntimeVersions = require('../lib/runtime-versions').getRuntimeVersions;
 var RUNTIME_VERSIONS = getRuntimeVersions();
 var V8_VERSION = RUNTIME_VERSIONS.V8;
 var NODE_VERSION = RUNTIME_VERSIONS.node;
+
+var gcoreSelf = require('./gcore_self');
 
 /*
  * We're going to look specifically for this function and buffer in the core
@@ -53,29 +56,22 @@ var OBJECT_KINDS = ['dict', 'inobject', 'numeric', 'props'];
 /*
  * Now we're going to fork ourselves to gcore
  */
-var spawn = require('child_process').spawn;
-var prefix = '/var/tmp/node';
-var corefile = prefix + '.' + process.pid;
 var tmpfile = '/var/tmp/node-postmortem-func' + '.' + process.pid;
-var gcore = spawn('gcore', [ '-o', prefix, process.pid + '' ]);
 var output = '';
-var unlinkSync = require('fs').unlinkSync;
-var args = [ '-S', corefile ];
 
-if (process.env.MDB_LIBRARY_PATH && process.env.MDB_LIBRARY_PATH != '')
-	args = args.concat([ '-L', process.env.MDB_LIBRARY_PATH ]);
+gcoreSelf(function (err, corefile) {
+	var unlinkSync = require('fs').unlinkSync;
+	var args = [ '-S', corefile ];
 
-gcore.stderr.on('data', function (data) {
-	console.log('gcore: ' + data);
-});
-
-gcore.on('exit', function (code) {
-	if (code != 0) {
-		console.error('gcore exited with code ' + code);
-		process.exit(code);
+	if (err) {
+		console.error('failed to gcore self: %s', err.message);
+		process.exit(1);
 	}
 
-	var mdb = spawn('mdb', args, { stdio: 'pipe' });
+	if (process.env.MDB_LIBRARY_PATH && process.env.MDB_LIBRARY_PATH != '')
+		args = args.concat([ '-L', process.env.MDB_LIBRARY_PATH ]);
+
+	var mdb = childprocess.spawn('mdb', args, { stdio: 'pipe' });
 
 	mdb.on('exit', function (code2) {
 		unlinkSync(tmpfile);

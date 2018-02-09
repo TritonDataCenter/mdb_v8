@@ -5,7 +5,7 @@
 #
 
 #
-# Copyright (c) 2015, Joyent, Inc.
+# Copyright (c) 2018, Joyent, Inc.
 #
 
 #
@@ -48,6 +48,7 @@ MDBV8_VERS_TAG	 = "dev"
 #
 MDBV8_SOURCES		 = \
     mdb_v8.c \
+    mdb_v8_array.c \
     mdb_v8_cfg.c \
     mdb_v8_function.c \
     mdb_v8_strbuf.c \
@@ -123,6 +124,18 @@ GITDESCRIBE	 = $(shell git describe --all --long --dirty | \
     awk -F'-g' '{print $$NF}')
 
 #
+# Include eng.git Makefile for managing "node_modules" directory.  A number of
+# items that are normally provided by Makefile.defs are specified here directly.
+#
+TOP		  = $(shell pwd)
+NPM		  = npm
+MAKE_STAMPS_DIR	  = make_stamps
+CLEAN_FILES	 += $(MAKE_STAMPS_DIR)
+MAKE_STAMP_REMOVE = mkdir -p $(@D); rm -f $(@)
+MAKE_STAMP_CREATE = mkdir -p $(@D); touch $(@)
+include ./tools/mk/Makefile.node_modules.defs
+
+#
 # TARGETS
 #
 .PHONY: all
@@ -137,7 +150,7 @@ check-cstyle:
 CLEAN_FILES += $(MDBV8_BUILD)
 
 .PHONY: test
-test: $(MDBV8_ALLTARGETS)
+test: $(MDBV8_ALLTARGETS) $(STAMP_NODE_MODULES)
 	$(CATEST) -a
 
 .PHONY: prepush
@@ -172,6 +185,8 @@ $(MDBV8_BUILD):
 	$(MKDIRP)
 
 #
-# Include common Joyent Makefile for JavaScript "check" targets.
+# Include common Joyent Makefile for JavaScript "check" targets and
+# "node_modules" management targets.
 #
-include Makefile.targ
+include ./Makefile.targ
+include ./tools/mk/Makefile.node_modules.targ

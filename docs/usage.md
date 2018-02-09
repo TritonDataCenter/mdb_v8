@@ -617,6 +617,84 @@ Of course, you can use other commands to inspect these values further.
 
 See also: `jsfunction`
 
+### jsarray
+
+    addr::jsarray [-i]
+
+Given an address `addr` of an instance of the JavaScript "Array" class, print
+the contents of the array.  Each element of the array is printed on its own
+line.  With no options, the result can be piped to `::jsprint` to print each
+element.
+
+For example, take this snippet:
+
+    var x = [ 'one', 'two', 'three' ];
+
+With `::jsarray`, this prints three pointers, one for each string:
+
+    > 9d780985::jsarray
+    8bc27629
+    8bc27639
+    8bc27649
+
+We can pipe this to `::jsprint` to see the strings:
+
+    > 9d780985::jsarray | ::jsprint
+    "one"
+    "two"
+    "three"
+
+With "-i", each value is prefixed with its integer index in the array:
+
+    > 9d780985::jsarray -i
+    0 8bc27629
+    1 8bc27639
+    2 8bc27649
+
+Note that JavaScript arrays can contain holes, where there is no element for a
+particular index (not even "undefined").  These appear when an element was
+removed using the `delete` keyword or when an array was initialized with a
+specific length, but not all of the elements were filled in.
+
+When `::jsarray` encounters a hole, the hole is printed out using a special
+value that `::jsprint` shows indicates a hole.  For example, take this snippet:
+
+    var x = new Array(4);
+    x[0] = 'one';
+    x[1] = 'two';
+    x[2] = 'three';
+    delete (x[1]);
+
+This produces an array with two holes: one at index 1 (because it was deleted)
+and one at index 3 (because it was never initialized, but the length was
+initialized to include this index).  If you print this out with `console.log`,
+you'd see:
+
+    [ 'one', , 'three',  ]
+
+(Note the extra commas where there are holes.)
+
+`::jsarray` prints the holes, which may look like ordinary values:
+
+    > 81780a0d::jsarray
+    aba27661
+    b4d080c1
+    aba27681
+    b4d080c1
+
+but are recognized by `::jsprint` as special:
+
+    > 81780a0d::jsarray | ::jsprint
+    "one"
+    hole
+    "three"
+    hole
+
+The default behavior around the printing of hole values may change in the
+future.
+
+See also: `walk jselement`
+
 ### jsconstructor
 
     addr::jsconstructor [-v]
@@ -874,6 +952,34 @@ With "-f", show only frames for function `function`.  With "-p", show only
 
 With "-a", show all information about hidden frames, the frame pointer for each
 frame, and other native objects for each frame (e.g., JSFunction addresses).
+
+### walk jselement
+
+    addr::walk jselement
+
+Given a JavaScript array identified by `addr`, enumerates the elements of the
+array.  This behaves very similarly to `::jsarray`.  See the notes about holes
+under `::jsarray`.
+
+For example, the array created by this code:
+
+    var x = [ 'one', 'two', 'three' ]
+
+is enumerated in the debugger like this:
+
+    > 9d780985::walk jselement
+    0x8bc27629
+    0x8bc27639
+    0x8bc27649
+
+The results can be piped to `::jsprint` to print the actual values:
+
+    > 9d780985::walk jselement | ::jsprint
+    "one"
+    "two"
+    "three"
+
+See also: `jsarray`.
 
 ### walk jsframe
 
