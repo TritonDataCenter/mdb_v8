@@ -14,11 +14,13 @@
 
 None.
 
-## v1.3.0 (2018-01)
+## v1.3.0 (2018-02-09)
 
 * #27 want streaming way to iterate array elements
 * #100 jsprint shows more "hole" values than it should
 * #101 test suite could use common mechanism for standalone tests
+* #102 mdb\_v8 misprinted object in 32-bit Node v4 core file
+* #104 test suite should take more care to avoid GC during gcore
 
 ## v1.2.1 (2017-09-20)
 
