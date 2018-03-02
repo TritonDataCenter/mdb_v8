@@ -12,7 +12,8 @@
 
 ## Unreleased changes
 
-None.
+* #111 want `::v8whatis`
+* #112 stack corruption in jsobj_properties()
 
 ## v1.3.0 (2018-02-09)
 

@@ -203,15 +203,7 @@ function main()
 		mdb.checkMdbLeaks(callback);
 	});
 
-	/*
-	 * This is a little cheesy, but we set this property to a boolean value
-	 * immediately before saving the core file to minimize the chance that
-	 * when we go look for this object that we'll find several other garbage
-	 * objects having the same property with the same value (because they've
-	 * been copied around by intervening GC operations).
-	 */
-	testObject['testObjectFinished'] = true;
-
+	common.finalizeTestObject(testObject);
 	common.standaloneTest(testFuncs, function (err) {
 		if (err) {
 			throw (err);
@@ -237,42 +229,9 @@ function eltvalue(name, i)
  * phases.
  */
 function findTestObjectAddr(mdb, callback) {
-	var cmdstr;
-
-	cmdstr = '::findjsobjects -p testObjectFinished | ::findjsobjects | ' +
-	    '::jsprint -b testObjectFinished\n';
-	mdb.runCmd(cmdstr, function (output) {
-		var lines, li, parts;
-
-		lines = output.split('\n');
-		assert.strictEqual(lines[lines.length - 1].length, 0,
-		    'last line was not empty');
-
-		for (li = 0; li < lines.length - 1; li++) {
-			parts = lines[li].split(':');
-			if (parts.length == 2 && parts[1] == ' true') {
-				if (testObjectAddr !== undefined) {
-					/*
-					 * We've probably found a garbage object
-					 * that's convincing enough that we
-					 * can't tell that it's wrong.
-					 */
-					callback(new Error(
-					    'found more than one possible ' +
-					    'test object'));
-					return;
-				}
-
-				testObjectAddr = parts[0];
-			}
-		}
-
-		if (testObjectAddr === undefined) {
-			callback(new Error('did not find test object'));
-		} else {
-			console.error('test object: ', testObjectAddr);
-			callback();
-		}
+	common.findTestObject(mdb, function (err, addr) {
+		testObjectAddr = addr;
+		callback(err);
 	});
 }
 

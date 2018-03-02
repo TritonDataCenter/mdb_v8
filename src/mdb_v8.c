@@ -2252,6 +2252,92 @@ obj_print_class(uintptr_t addr, v8_class_t *clp)
 }
 
 /*
+ * Attempts to determine whether the object at "addr" might contain the address
+ * "target".  This is used for low-level heuristic analysis.  Note that it's
+ * possible that we cannot tell whether the address is contained (e.g., if this
+ * is a variable-length object and we can't read how big it is).
+ */
+static int
+obj_contains(uintptr_t addr, uint8_t type, uintptr_t target,
+    boolean_t *containsp, int memflags)
+{
+	size_t size;
+	uintptr_t objsize;
+
+	/*
+	 * For sequential strings, we need to look at how many characters there
+	 * are, and how many bytes per character are used to encode the string.
+	 * For other types of strings, the V8 heap object is not variable-sized,
+	 * so we can treat it like the other cases below.
+	 */
+	if (V8_TYPE_STRING(type) && V8_STRREP_SEQ(type)) {
+		v8string_t *strp;
+		size_t length;
+
+		if ((strp = v8string_load(addr, memflags)) == NULL) {
+			return (-1);
+		}
+
+		length = v8string_length(strp);
+
+		if (V8_STRENC_ASCII(type)) {
+			size = V8_OFF_SEQASCIISTR_CHARS + length;
+		} else {
+			size = V8_OFF_SEQTWOBYTESTR_CHARS + (2 * length);
+		}
+
+		v8string_free(strp);
+		*containsp = target < addr + size;
+		return (0);
+	}
+
+	if (type == V8_TYPE_FIXEDARRAY) {
+		v8fixedarray_t *arrayp;
+		size_t length;
+
+		if ((arrayp = v8fixedarray_load(addr, memflags)) == NULL) {
+			return (-1);
+		}
+
+		length = v8fixedarray_length(arrayp);
+		size = V8_OFF_FIXEDARRAY_DATA + length * sizeof (uintptr_t);
+		v8fixedarray_free(arrayp);
+		*containsp = target < addr + size;
+		return (0);
+	}
+
+	if (read_size(&objsize, addr) != 0) {
+		return (-1);
+	}
+
+	size = objsize;
+	if (type == V8_TYPE_JSOBJECT) {
+		/*
+		 * Instances of JSObject can also contain a number of property
+		 * values directly in the object.  To find out how many, we need
+		 * to read the count out of the map.  See jsobj_properties() for
+		 * details on how this works.
+		 */
+		uintptr_t map;
+		uint8_t ninprops;
+		if (mdb_vread(&map, sizeof (map),
+		    addr + V8_OFF_HEAPOBJECT_MAP) == -1) {
+			return (-1);
+		}
+
+		if (mdb_vread(&ninprops, sizeof (ninprops),
+		    map + V8_OFF_MAP_INOBJECT_PROPERTIES) == -1) {
+			return (-1);
+		}
+
+		size += ninprops * sizeof (uintptr_t);
+	}
+
+	*containsp = target < addr + size;
+	return (0);
+}
+
+/*
  * Print the ASCII string for the given JS string, expanding ConsStrings and
  * ExternalStrings as needed.
  *
@@ -2702,7 +2788,7 @@ jsobj_properties(uintptr_t addr,
 	 */
 	if (read_size(&size, addr) != 0)
 		size = 0;
-	if (mdb_vread(&ninprops, ps,
+	if (mdb_vread(&ninprops, sizeof (ninprops),
 	    map + V8_OFF_MAP_INOBJECT_PROPERTIES) == -1)
 		goto err;
 
@@ -6763,6 +6849,170 @@ dcmd_v8warnings(uintptr_t addr, uint_t flags, int argc, const mdb_arg_t *argv)
 	return (DCMD_OK);
 }
 
+/*
+ * "v8whatis" scours the memory just prior to the given address looking for
+ * structure that indicates a V8 heap object.  This is a heuristic way to find
+ * the V8 heap object containing a specific address.
+ */
+static int
+dcmd_v8whatis(uintptr_t addr, uint_t flags, int argc, const mdb_arg_t *argv)
+{
+	uintptr_t origaddr, curaddr, curvalue, ptrlowbits;
+	size_t curoffset, maxoffset = 4096;
+	boolean_t contained, verbose = B_FALSE;
+	uint8_t typebyte;
+
+	if (!(flags & DCMD_ADDRSPEC)) {
+		mdb_warn("must specify address for ::v8whatis\n");
+		return (DCMD_ERR);
+	}
+
+	if (mdb_getopts(argc, argv,
+	    'v', MDB_OPT_SETBITS, B_TRUE, &verbose,
+	    'd', MDB_OPT_UINTPTR, &maxoffset, NULL) != argc) {
+		return (DCMD_USAGE);
+	}
+
+	if (maxoffset > INT16_MAX) {
+		mdb_warn("warn: very large value supplied for \"-d\": %u\n",
+		    maxoffset);
+	}
+
+	origaddr = addr;
+
+	/*
+	 * Objects will always be stored at pointer-aligned addresses.  If we're
+	 * given an address that's not pointer-aligned, clear the low bits to
+	 * find the pointer-sized value containing the address given.
+	 */
+	ptrlowbits = sizeof (uintptr_t) - 1;
+	addr &= ~ptrlowbits;
+	assert(addr <= origaddr && origaddr - addr < sizeof (uintptr_t));
+
+	/*
+	 * On top of that, set the heap object tag bits.  Recall that most
+	 * mdb_v8 commands interpret values the same way as V8: if the tag bits
+	 * are set, then this is a heap object; otherwise, it's not.  And this
+	 * command only makes sense for heap objects, so one might expect that
+	 * we would bail if we're given something else.  But in practice, this
+	 * command is expected to be chained with `::ugrep` or some other
+	 * command that reports heap objects without the tag bits set, so it
+	 * makes sense to just assume they were supposed to be set.
+	 */
+	addr |= V8_HeapObjectTag;
+	if (verbose && origaddr != addr) {
+		mdb_warn("assuming heap object at %p\n", addr);
+	}
+
+	/*
+	 * At this point, we walk backwards from the address we're given looking
+	 * for something that looks like a V8 heap object.
+	 */
+	for (curoffset = 0; curoffset < maxoffset;
+	    curoffset += sizeof (uintptr_t)) {
+		curaddr = addr - curoffset;
+		assert(V8_IS_HEAPOBJECT(curaddr));
+
+		if (read_heap_ptr(&curvalue, curaddr,
+		    V8_OFF_HEAPOBJECT_MAP) != 0 ||
+		    read_typebyte(&typebyte, curvalue) != 0) {
+			/*
+			 * The address we're looking at was either unreadable,
+			 * or we could not follow its Map pointer to find the
+			 * type byte.  This cannot be a valid heap object
+			 * because every heap object has a Map pointer as its
+			 * first field.
+			 */
+			continue;
+		}
+
+		if (typebyte != V8_TYPE_MAP) {
+			/*
+			 * The address we're looking at refers to something
+			 * other than a Map.  Again, this cannot be the address
+			 * of a valid heap object.
+			 */
+			continue;
+		}
+
+		/*
+		 * We've found what looks like a valid Map object.  See if we
+		 * can read its type byte, too.  If not, this is likely garbage.
+		 */
+		if (read_typebyte(&typebyte, curaddr) != 0) {
+			continue;
+		}
+
+		break;
+	}
+
+	if (curoffset >= maxoffset) {
+		if (verbose) {
+			mdb_warn("%p: no heap object found in previous "
+			    "%u bytes\n", addr, maxoffset);
+		}
+		return (DCMD_OK);
+	}
+
+	/*
+	 * At this point, check to see if the address that we were given might
+	 * be contained in this object.  If not, that means we found a Map for a
+	 * heap object that doesn't contain our target address.  We could have
+	 * checked this in the loop above so that we'd keep walking backwards in
+	 * this case, but we assume that Map objects aren't likely to appear
+	 * inside the middle of other valid objects, and thus that if we found a
+	 * Map and its heap object doesn't contain our target address, then
+	 * we're done -- there is no heap object containing our target.
+	 */
+	if (obj_contains(curaddr, typebyte, addr, &contained,
+	    UM_SLEEP | UM_GC) == 0 && !contained) {
+		if (verbose) {
+			mdb_warn("%p: heap object found at %p "
+			    "(%p-0x%x, type %s) does not appear to contain "
+			    "%p\n", addr, curaddr, addr, curoffset,
+			    enum_lookup_str(v8_types, typebyte, "(unknown)"),
+			    addr);
+		}
+		return (DCMD_OK);
+	}
+
+	if (!verbose) {
+		mdb_printf("%p\n", curaddr);
+		return (DCMD_OK);
+	}
+
+	mdb_printf("%p (found Map at %p (%p-0x%x) for type %s)", curaddr,
+	    curaddr, origaddr, origaddr - curaddr,
+	    enum_lookup_str(v8_types, typebyte, "(unknown)"));
+	return (DCMD_OK);
+}
+
+static void
+dcmd_v8whatis_help(void)
+{
+	mdb_printf("%s\n\n",
+"Given an address, attempt to determine what V8 heap object, if any,\n"
+"contains the address.  V8 heap objects have a reasonably consistent header\n"
+"structure.  This command walks back from the given address looking for this\n"
+"structure.  This is believed to be reasonably reliable, but it's ultimately\n"
+"heuristic and may produce the wrong output.\n"
+"\n"
+"Note that unlike other dcmds, this command accepts untagged heap addresses\n"
+"(which would normally be considered non-heap, small integer values) and \n"
+"implicitly adds the tag, allowing it to be more easily used with ::ugrep.\n");
+
+	mdb_dec_indent(2);
+	mdb_printf("%<b>OPTIONS%</b>\n");
+	mdb_inc_indent(2);
+
+	mdb_printf("%s\n",
+"  -v       Verbose mode -- print details about any matches found\n"
+"           (or why a found match was not reported)\n"
+"  -d BYTES Scan up to BYTES bytes below the initial target.  Default: 4096\n");
+}
+
+
+
 typedef struct jselement_walk_data {
 	mdb_walk_state_t *jsew_wsp;
 	int		 jsew_memflags;
@@ -7039,6 +7289,8 @@ static const mdb_dcmd_t v8_mdb_dcmds[] = {
 		dcmd_v8types },
 	{ "v8warnings", NULL, "toggle V8 warnings",
 		dcmd_v8warnings },
+	{ "v8whatis", NULL, "attempt to identify containing V8 heap object",
+		dcmd_v8whatis, dcmd_v8whatis_help },
 
 	{ NULL }
 };

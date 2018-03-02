@@ -26,9 +26,12 @@ var gcoreSelf = require('./gcore_self');
 /* Public interface */
 exports.dmodpath = dmodpath;
 exports.createMdbSession = createMdbSession;
+exports.finalizeTestObject = finalizeTestObject;
 exports.standaloneTest = standaloneTest;
+exports.findTestObject = findTestObject;
+exports.splitMdbLines = splitMdbLines;
 
-var MDB_SENTINEL = 'MDB_SENTINEL\n';
+var MDB_SENTINEL = 'MDB_SENTINEL';
 
 /*
  * Returns the path to the built dmod, for loading into mdb during testing.
@@ -55,7 +58,8 @@ function MdbSession()
 	/* runtime state */
 	this.mdb_exited = false;
 	this.mdb_error = null;
-	this.mdb_output = '';	/* buffered output */
+	this.mdb_stdout = '';	/* buffered stdout */
+	this.mdb_stderr = '';	/* buffered stderr */
 	this.mdb_findleaks = null;
 }
 
@@ -79,7 +83,8 @@ MdbSession.prototype.runCmd = function (str, callback)
 	this.mdb_pending_callback = callback;
 	process.stderr.write('> ' + str);
 	this.mdb_child.stdin.write(str);
-	this.mdb_child.stdin.write('!echo ' + MDB_SENTINEL);
+	this.mdb_child.stdin.write('!printf ' + MDB_SENTINEL + '; ');
+	this.mdb_child.stdin.write('!printf ' + MDB_SENTINEL + ' >&2\n');
 };
 
 MdbSession.prototype.onExit = function (code)
@@ -94,20 +99,33 @@ MdbSession.prototype.onExit = function (code)
 
 MdbSession.prototype.doWork = function ()
 {
-	var i, chunk, callback;
+	var outi, outchunk;
+	var erri, errchunk;
+	var callback;
 
-	i = this.mdb_output.indexOf(MDB_SENTINEL);
-	assert.ok(i >= 0);
-	chunk = this.mdb_output.substr(0, i);
-	this.mdb_output = this.mdb_output.substr(i + MDB_SENTINEL.length);
-	console.error(chunk);
+	outi = this.mdb_stdout.indexOf(MDB_SENTINEL);
+	erri = this.mdb_stderr.indexOf(MDB_SENTINEL);
+	if (outi == -1 || erri == -1) {
+		return;
+	}
+
+	outchunk = this.mdb_stdout.substr(0, outi);
+	this.mdb_stdout = this.mdb_stdout.substr(outi + MDB_SENTINEL.length);
+	console.error(outchunk);
+
+	errchunk = this.mdb_stderr.substr(0, erri);
+	this.mdb_stderr = this.mdb_stderr.substr(erri + MDB_SENTINEL.length);
+
+	if (errchunk.length > 0) {
+		console.log('mdb: stderr: ' + errchunk);
+	}
 
 	assert.notStrictEqual(this.mdb_pending_cmd, null);
 	assert.notStrictEqual(this.mdb_pending_callback, null);
 	callback = this.mdb_pending_callback;
 	this.mdb_pending_callback = null;
 	this.mdb_pending_cmd = null;
-	callback(chunk);
+	callback(outchunk, errchunk);
 };
 
 MdbSession.prototype.finish = function (error)
@@ -183,7 +201,6 @@ function createMdbSessionFile(filename, callback)
 function createMdbSession(args, callback)
 {
 	var mdb, loaddmod;
-	var loaded = false;
 
 	assert.equal('object', typeof (args));
 	assert.equal('string', typeof (args.targetType));
@@ -230,10 +247,8 @@ function createMdbSession(args, callback)
 	});
 
 	mdb.mdb_child.stdout.on('data', function (chunk) {
-		mdb.mdb_output += chunk;
-		while (mdb.mdb_output.indexOf(MDB_SENTINEL) != -1) {
-			mdb.doWork();
-		}
+		mdb.mdb_stdout += chunk;
+		mdb.doWork();
 	});
 
 	mdb.mdb_onprocexit = function (code) {
@@ -245,25 +260,26 @@ function createMdbSession(args, callback)
 	process.on('exit', mdb.mdb_onprocexit);
 
 	mdb.mdb_child.stderr.on('data', function (chunk) {
-		console.log('mdb: stderr: ' + chunk);
-		assert.ok(!loaddmod || loaded,
-		    'dmod emitted stderr before ::load was complete');
+		mdb.mdb_stderr += chunk;
+		mdb.doWork();
 	});
 
 	/*
 	 * The '1000$w' sets the terminal width to a large value to keep MDB
 	 * from inserting newlines at the default 80 columns.
 	 */
-	mdb.runCmd('1000$w\n', function () {
+	mdb.runCmd('1000$w\n', function (output, erroutput) {
 		var cmdstr;
 		if (!loaddmod) {
 			callback(null, mdb);
 			return;
 		}
 
+		assert.strictEqual(erroutput.length, 0);
 		cmdstr = '::load ' + dmodpath() + '\n';
-		mdb.runCmd(cmdstr, function () {
-			loaded = true;
+		mdb.runCmd(cmdstr, function (loadoutput, loaderroutput) {
+			assert.strictEqual(loaderroutput.length, 0,
+			    'expected no stderr from ::load');
 			callback(null, mdb);
 		});
 	});
@@ -312,4 +328,91 @@ function standaloneTest(funcs, callback)
 
 		callback(err);
 	});
+}
+
+/*
+ * This function should be invoked by callers of standaloneTest immediately
+ * before invoking common.standaloneTest().  The argument should be a test
+ * object that you will want to locate in the core file with findTestObject().
+ *
+ * For context: the standalone tests generally use a single test object from
+ * which other objects of interest may be referenced.  In order to verify mdb_v8
+ * functionality, these tests usually have to first locate this test object in
+ * the core file.  This is easiest if the object has a unique, well-known
+ * property with a well-known value.  This is a little cheesy, but we set this
+ * property here to a boolean value.  Because we're doing this immediately
+ * prior to invoking gcoreSelf(), we minimize the chance that findTestObject()
+ * finds multiple copies of the object created by intervening GC operations.
+ */
+function finalizeTestObject(obj)
+{
+	obj['testObjectFinished'] = true;
+}
+
+/*
+ * Uses the specified MDB session to locate our test object in the core file.
+ * The test object is whatever object was nominated by a previous call to
+ * finalizeTestObject().
+ */
+function findTestObject(mdb, callback)
+{
+	var cmdstr, rv;
+
+	cmdstr = '::findjsobjects -p testObjectFinished | ' +
+	    '::findjsobjects | ' +
+	    '::jsprint -b testObjectFinished\n';
+	mdb.runCmd(cmdstr, function (output) {
+		var lines, li, parts;
+
+		lines = output.split('\n');
+		assert.strictEqual(lines[lines.length - 1].length, 0,
+		    'last line was not empty');
+
+		for (li = 0; li < lines.length - 1; li++) {
+			parts = lines[li].split(':');
+			if (parts.length == 2 && parts[1] == ' true') {
+				if (rv !== undefined) {
+					/*
+					 * We've probably found a garbage object
+					 * that's convincing enough that we
+					 * can't tell that it's wrong.
+					 */
+					callback(new Error(
+					    'found more than one possible ' +
+					    'test object'));
+					return;
+				}
+
+				rv = parts[0];
+			}
+		}
+
+		if (rv === undefined) {
+			callback(new Error('did not find test object'));
+		} else {
+			console.error('test object: ', rv);
+			callback(null, rv);
+		}
+	});
+}
+
+/*
+ * Splits MDB output into lines, optionally verifying other properties.
+ */
+function splitMdbLines(output, options)
+{
+	var lines;
+
+	assert.equal('string', typeof (output));
+	assert.equal('object', typeof (options));
+
+	lines = output.split('\n');
+	assert.strictEqual(lines[lines.length - 1].length, 0,
+	    'expected last line to be empty');
+	if (options.count !== undefined) {
+		assert.equal('number', typeof (options.count));
+		assert.strictEqual(options.count, lines.length - 1);
+	}
+
+	return (lines.slice(0, lines.length - 1));
 }

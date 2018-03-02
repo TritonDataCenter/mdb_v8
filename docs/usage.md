@@ -1042,6 +1042,8 @@ Walking V8 structures:
 * v8scopeinfo: print information about a V8 ScopeInfo object
 * v8str: print the contents of a V8 string (optionally show details of structure)
 * v8type: print the V8 type of a heap object
+* v8whatis: print information about any V8 heap object containing the given
+  address
 
 Modifying configuration:
 
