@@ -5,7 +5,7 @@
 -->
 
 <!--
-    Copyright (c) 2017, Joyent, Inc.
+    Copyright (c) 2018, Joyent, Inc.
 -->
 
 # Postmortem debugging with mdb_v8
@@ -567,6 +567,8 @@ Option summary:
     -r       Find references to the specified and/or marked object(s)
     -v       Provide verbose statistics
 
+See also: `jsfindrefs`.
+
 ### jsclosure
 
     addr::jsclosure
@@ -704,6 +706,106 @@ that was used as the object's constructor.  With -v, provides the constructor
 function's underlying V8 heap object address for use with `v8function`.
 
 See also: `jsfunction`
+
+### jsfindrefs
+
+    addr::jsfindrefs [-dv] [-l maxdepth]
+
+Given an object identified by `addr`, attempts to find JavaScript values that
+appear to reference `addr`.  This command attempts to find all known types of
+reference, including:
+
+- objects with a property whose value is `addr`
+- arrays with an element whose value is `addr`
+- closures containing a variable whose value is `addr`
+- functions created with `Function.bind()` where `addr` is the value of one of
+  the bound variables
+- sliced strings whose underlying string is `addr`
+- regular expressions whose source string is `addr`
+
+and others.  For example, if `addr` is a socket, you could use this command to
+find higher-level objects with a reference to the socket.  This is useful in
+general debugging, and especially when debugging memory leaks in order to figure
+out why an object has not been garbage-collected.
+
+With no arguments, the command prints out other JavaScript values that
+reference the given value `addr`.  For example, suppose we start with this
+array:
+
+    > 8f912f09::jsprint -d1
+    [
+        16,
+        32,
+        64,
+        96,
+        "^regular expression!$",
+        [...],
+    ]
+
+We can find what other objects reference this array.  In this case, there's
+only one:
+
+    > 8f912f09::jsfindrefs
+    8f912df1
+
+If we print out that value, we can see that it's an object, and that it does
+indeed reference our array via a property called "anArray":
+
+    > 8f912df1::jsprint -a
+    8f912df1: {
+    ...
+        "anArray": 8f912f09: [
+            20: 16,
+            40: 32,
+            80: 64,
+            c0: 96,
+            bda8ae39: "^regular expression!$",
+            8f912df1: [...],
+        ],
+    ...
+    }
+
+In this case, the "parent" object is also an element of the array.  This is a
+circular reference.  If we print the object's references, we'll find the array
+among them:
+
+    > 8f912df1::jsfindrefs
+    ...
+    8f912f09
+
+With the `-v` option, `jsfindrefs` prints a brief summary of each reference that
+it finds:
+
+    > 8f912f09::jsfindrefs -v
+    8f912df1 (type: JSObject)
+
+    > 8f912df1::jsfindrefs -v
+    ...
+    8f912f09 (type: JSArray)
+
+The output format used for `-v` is subject to change.
+
+With the `-l maxdepth` option, `jsfindrefs` limits its search to at most
+`maxdepth` levels of indirection among the underlying V8 heap classes.  In
+practice, it's only necessary to traverse 1 or 2 back references to find
+legitimate JavaScript references, so the default value for this option is quite
+low.
+
+With the `-d` option, `jsfindrefs` prints information as it walks back the
+reference graph.  This is intended for debugging cases where the command
+misbehaves, though it's likely that familiarity with V8 internals is needed to
+make sense of the output.  The output format for `-d` is subject to change.
+
+As with the rest of mdb_v8, this command is heuristic and may produce incorrect
+or incomplete output.  Please file a bug if you encounter this.
+
+This command may report duplicate results.
+
+See also: `findjsobjects`.  This command is similar to `::findjsobjects -r`, but
+it's much faster, as it does not require parsing every JavaScript object in the
+program.  (It does scan all mappings in the address space, but this is generally
+quite quick.)
+
 
 ### jsframe
 

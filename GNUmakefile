@@ -50,10 +50,12 @@ MDBV8_SOURCES		 = \
     mdb_v8.c \
     mdb_v8_array.c \
     mdb_v8_cfg.c \
+    mdb_v8_dbi.c \
     mdb_v8_function.c \
     mdb_v8_strbuf.c \
     mdb_v8_string.c \
-    mdb_v8_subr.c
+    mdb_v8_subr.c \
+    mdb_v8_whatis.c
 
 MDBV8_GENSOURCES	 = mdb_v8_version.c
 

@@ -35,6 +35,7 @@
 #include "v8cfg.h"
 #include "mdb_v8_version.h"
 #include "mdb_v8_dbg.h"
+#include "mdb_v8_dbi.h"
 
 #define	offsetof(s, m)	((size_t)(&(((s *)0)->m)))
 
@@ -1800,7 +1801,7 @@ read_typebyte(uint8_t *valp, uintptr_t addr)
  * Given a heap object, returns in *valp the size of the object.  For
  * variable-size objects, returns an undefined value.
  */
-static int
+int
 read_size(size_t *valp, uintptr_t addr)
 {
 	uintptr_t mapaddr;
@@ -2252,92 +2253,6 @@ obj_print_class(uintptr_t addr, v8_class_t *clp)
 }
 
 /*
- * Attempts to determine whether the object at "addr" might contain the address
- * "target".  This is used for low-level heuristic analysis.  Note that it's
- * possible that we cannot tell whether the address is contained (e.g., if this
- * is a variable-length object and we can't read how big it is).
- */
-static int
-obj_contains(uintptr_t addr, uint8_t type, uintptr_t target,
-    boolean_t *containsp, int memflags)
-{
-	size_t size;
-	uintptr_t objsize;
-
-	/*
-	 * For sequential strings, we need to look at how many characters there
-	 * are, and how many bytes per character are used to encode the string.
-	 * For other types of strings, the V8 heap object is not variable-sized,
-	 * so we can treat it like the other cases below.
-	 */
-	if (V8_TYPE_STRING(type) && V8_STRREP_SEQ(type)) {
-		v8string_t *strp;
-		size_t length;
-
-		if ((strp = v8string_load(addr, memflags)) == NULL) {
-			return (-1);
-		}
-
-		length = v8string_length(strp);
-
-		if (V8_STRENC_ASCII(type)) {
-			size = V8_OFF_SEQASCIISTR_CHARS + length;
-		} else {
-			size = V8_OFF_SEQTWOBYTESTR_CHARS + (2 * length);
-		}
-
-		v8string_free(strp);
-		*containsp = target < addr + size;
-		return (0);
-	}
-
-	if (type == V8_TYPE_FIXEDARRAY) {
-		v8fixedarray_t *arrayp;
-		size_t length;
-
-		if ((arrayp = v8fixedarray_load(addr, memflags)) == NULL) {
-			return (-1);
-		}
-
-		length = v8fixedarray_length(arrayp);
-		size = V8_OFF_FIXEDARRAY_DATA + length * sizeof (uintptr_t);
-		v8fixedarray_free(arrayp);
-		*containsp = target < addr + size;
-		return (0);
-	}
-
-	if (read_size(&objsize, addr) != 0) {
-		return (-1);
-	}
-
-	size = objsize;
-	if (type == V8_TYPE_JSOBJECT) {
-		/*
-		 * Instances of JSObject can also contain a number of property
-		 * values directly in the object.  To find out how many, we need
-		 * to read the count out of the map.  See jsobj_properties() for
-		 * details on how this works.
-		 */
-		uintptr_t map;
-		uint8_t ninprops;
-		if (mdb_vread(&map, sizeof (map),
-		    addr + V8_OFF_HEAPOBJECT_MAP) == -1) {
-			return (-1);
-		}
-
-		if (mdb_vread(&ninprops, sizeof (ninprops),
-		    map + V8_OFF_MAP_INOBJECT_PROPERTIES) == -1) {
-			return (-1);
-		}
-
-		size += ninprops * sizeof (uintptr_t);
-	}
-
-	*containsp = target < addr + size;
-	return (0);
-}
-
-/*
  * Print the ASCII string for the given JS string, expanding ConsStrings and
  * ExternalStrings as needed.
  *
@@ -2560,6 +2475,13 @@ jsobj_maybe_garbage(uintptr_t addr)
  * The canonical source of the information used here is the implementation of
  * property lookup in the V8 source code, currently in Object::GetProperty.
  */
+
+/* ARGSUSED */
+static int
+jsobj_noop(const char *name, v8propvalue_t *propval, void *arg)
+{
+	return (0);
+}
 
 static int
 jsobj_properties(uintptr_t addr,
@@ -4210,7 +4132,7 @@ dcmd_v8print_help(void)
 	    "class.  With no arguments, the appropriate class is detected\n"
 	    "automatically.  The 'class' argument overrides this to print an\n"
 	    "object as an instance of the given class.  The list of known\n"
-	    "classes can be viewed with ::jsclasses.");
+	    "classes can be viewed with ::v8classes.\n");
 }
 
 /* ARGSUSED */
@@ -6165,6 +6087,227 @@ dcmd_jsconstructor(uintptr_t addr, uint_t flags, int argc,
 	return (DCMD_OK);
 }
 
+typedef struct {
+	uintptr_t	jsfr_addr;
+	uintptr_t	jsfr_origaddr;
+	size_t		jsfr_maxoffset;
+	unsigned short	jsfr_curdepth;
+	unsigned short	jsfr_maxdepth;
+	boolean_t	jsfr_verbose;
+	boolean_t	jsfr_debug;
+} jsfindrefs_t;
+
+static int jsfindrefs(jsfindrefs_t *);
+static int jsfindrefs_reference(uintptr_t, void *);
+
+static void
+dcmd_jsfindrefs_help(void)
+{
+	mdb_printf("%s\n",
+"Given an address representing a JavaScript value, attempt to find JavaScript\n"
+"objects referencing that value.  These references might include objects\n"
+"having this value as a property, arrays having this value as an element,\n"
+"closures having this value in a closure variable, and many other cases.\n");
+
+	mdb_dec_indent(2);
+	mdb_printf("%<b>OPTIONS%</b>\n");
+	mdb_inc_indent(2);
+
+	mdb_printf("%s\n",
+"  -d           print debug info about graph traversal (unstable output)\n"
+"  -v           print verbose information about each match (unstable output)\n"
+"  -l maxdepth  limit search to at most \"maxdepth\" levels of indirection\n");
+}
+
+static int
+dcmd_jsfindrefs(uintptr_t addr, uint_t flags, int argc, const mdb_arg_t *argv)
+{
+	jsfindrefs_t jsfr;
+	int err;
+
+	if (!(flags & DCMD_ADDRSPEC)) {
+		mdb_warn("must specify address for ::jsfindrefs\n");
+		return (DCMD_USAGE);
+	}
+
+	jsfr.jsfr_addr = addr;
+	jsfr.jsfr_origaddr = addr;
+	jsfr.jsfr_curdepth = 0;
+	jsfr.jsfr_maxdepth = 5;
+	jsfr.jsfr_maxoffset = 16384;
+	jsfr.jsfr_verbose = B_FALSE;
+	jsfr.jsfr_debug = B_FALSE;
+
+	if (mdb_getopts(argc, argv,
+	    'v', MDB_OPT_SETBITS, B_TRUE, &jsfr.jsfr_verbose,
+	    'd', MDB_OPT_SETBITS, B_TRUE, &jsfr.jsfr_debug,
+	    'l', MDB_OPT_UINTPTR, &jsfr.jsfr_maxdepth, NULL) != argc) {
+		return (DCMD_USAGE);
+	}
+
+	err = jsfindrefs(&jsfr);
+	return (err == 0 ? DCMD_OK : DCMD_ERR);
+}
+
+static int
+jsfindrefs(jsfindrefs_t *jsfr)
+{
+	return (dbi_ugrep(jsfr->jsfr_addr, jsfindrefs_reference, jsfr));
+}
+
+static int
+jsfindrefs_reference(uintptr_t refaddr, void *arg)
+{
+	jsfindrefs_t *jsfr = arg;
+	v8whatis_t whatis;
+	v8whatis_error_t err;
+	boolean_t verbose = jsfr->jsfr_verbose;
+	boolean_t debug = jsfr->jsfr_debug;
+	jspropinfo_t propinfo;
+
+	if (debug) {
+		mdb_printf("depth %d: %p: found reference at %p: ",
+		    jsfr->jsfr_curdepth, jsfr->jsfr_addr, refaddr);
+	}
+
+	err = v8whatis(refaddr, jsfr->jsfr_maxoffset, &whatis);
+	if (err == V8W_ERR_NOTFOUND) {
+		if (debug) {
+			mdb_printf("no heap object found within %d bytes\n",
+			    jsfr->jsfr_maxoffset);
+		}
+
+		return (0);
+	}
+
+	if (err == V8W_ERR_DOESNTCONTAIN) {
+		if (debug) {
+			mdb_printf("does not appear to be contained in a "
+			    "heap object\n");
+		}
+
+		return (0);
+	}
+
+	if (err != V8W_OK) {
+		if (debug) {
+			mdb_printf("unknown error\n");
+		}
+
+		return (-1);
+	}
+
+	/*
+	 * If we're looking at a JSObject, check whether the object itself
+	 * appears to be garbage.
+	 */
+	propinfo = JPI_NONE;
+	if (whatis.v8w_basetype == V8_TYPE_JSOBJECT &&
+	    (jsobj_properties(whatis.v8w_baseaddr, jsobj_noop, NULL,
+	    &propinfo) != 0 || (propinfo & JPI_MAYBE_GARBAGE) != 0)) {
+		if (debug) {
+			mdb_printf("skipping apparent garbage object: "
+			    "%p (%x)\n", whatis.v8w_baseaddr, propinfo);
+		}
+
+		return (0);
+	}
+
+	/*
+	 * If we're looking at a JSFunction, check whether our depth is larger
+	 * than one.  The reason for this is that if we landed at a JSFunction,
+	 * this is likely to be a closure variable reference.  In that case, if
+	 * the depth is more than one, then we've likely walked up to parent
+	 * closures, which we want to avoid here.  (If we limited the global
+	 * depth to 1, we'd miss other important cases -- like Arrays.)
+	 */
+	if (whatis.v8w_basetype == V8_TYPE_JSFUNCTION &&
+	    jsfr->jsfr_curdepth > 1) {
+		if (debug) {
+			mdb_printf("skipping JSFunction reference %p "
+			    "at depth %d\n", whatis.v8w_baseaddr,
+			    jsfr->jsfr_curdepth);
+		}
+
+		return (0);
+	}
+
+	if (whatis.v8w_basetype == V8_TYPE_HEAPNUMBER ||
+	    whatis.v8w_basetype == V8_TYPE_MUTABLEHEAPNUMBER ||
+	    whatis.v8w_basetype == V8_TYPE_ODDBALL ||
+	    whatis.v8w_basetype == V8_TYPE_JSOBJECT ||
+	    whatis.v8w_basetype == V8_TYPE_JSARRAY ||
+	    whatis.v8w_basetype == V8_TYPE_JSFUNCTION ||
+	    whatis.v8w_basetype == V8_TYPE_JSDATE ||
+	    whatis.v8w_basetype == V8_TYPE_JSREGEXP ||
+	    whatis.v8w_basetype == V8_TYPE_JSTYPEDARRAY ||
+	    whatis.v8w_basetype == V8_TYPE_JSBOUNDFUNCTION ||
+	    (V8_TYPE_STRING(whatis.v8w_basetype) &&
+	    (V8_STRREP_CONS(whatis.v8w_basetype) ||
+	    V8_STRREP_SLICED(whatis.v8w_basetype)))) {
+		/*
+		 * Success!  We've found a real JavaScript value.
+		 */
+		if (debug || verbose) {
+			mdb_printf("%p (type: %s)\n", whatis.v8w_baseaddr,
+			    enum_lookup_str(v8_types, whatis.v8w_basetype,
+			    "(unknown)"));
+		} else {
+			mdb_printf("%p\n", whatis.v8w_baseaddr);
+		}
+
+		return (0);
+	}
+
+	if (whatis.v8w_basetype == V8_TYPE_FIXEDARRAY) {
+		/*
+		 * FixedArrays can be legitimate intermediate values for
+		 * array element references, closure references, and some
+		 * property references.  In this case, we'll take another lap,
+		 * assuming we haven't hit our depth limit.
+		 */
+		jsfindrefs_t subjsfr;
+
+		if (debug) {
+			mdb_printf("internal V8 intermediate object\n");
+		}
+
+		if (jsfr->jsfr_curdepth == jsfr->jsfr_maxdepth - 1) {
+			/*
+			 * We don't expect this to happen in practice very
+			 * often, since most JS values should be referenced by
+			 * some other JS value within less than 5 hops through
+			 * V8 values.  So it's worth letting the user know when
+			 * this happens.  If this becomes noisy, we could hide
+			 * this under v8_warn() or else figure out if we should
+			 * handle the noisy cases better.
+			 */
+			mdb_warn("%p: gave up after following %d references\n",
+			    jsfr->jsfr_origaddr, jsfr->jsfr_curdepth);
+			return (0);
+		} else {
+			subjsfr = *jsfr;
+			subjsfr.jsfr_addr = whatis.v8w_baseaddr;
+			subjsfr.jsfr_curdepth++;
+			return (jsfindrefs(&subjsfr));
+		}
+	}
+
+	/*
+	 * We could treat this the same as we do for FixedArrays, but at
+	 * this time, we don't know what other intermediate types there
+	 * are, so we don't know whether this makes any sense.  For now,
+	 * we just stop the search.
+	 */
+	if (debug) {
+		mdb_printf("giving up search at instance of %s\n",
+		    enum_lookup_str(v8_types, whatis.v8w_basetype,
+		    "(unknown)"));
+	}
+
+	return (0);
+}
+
 /* ARGSUSED */
 static int
 dcmd_jsframe(uintptr_t addr, uint_t flags, int argc, const mdb_arg_t *argv)
@@ -6857,10 +7000,10 @@ dcmd_v8warnings(uintptr_t addr, uint_t flags, int argc, const mdb_arg_t *argv)
 static int
 dcmd_v8whatis(uintptr_t addr, uint_t flags, int argc, const mdb_arg_t *argv)
 {
-	uintptr_t origaddr, curaddr, curvalue, ptrlowbits;
-	size_t curoffset, maxoffset = 4096;
-	boolean_t contained, verbose = B_FALSE;
-	uint8_t typebyte;
+	size_t maxoffset = 4096;
+	boolean_t verbose = B_FALSE;
+	v8whatis_t whatis;
+	v8whatis_error_t err;
 
 	if (!(flags & DCMD_ADDRSPEC)) {
 		mdb_warn("must specify address for ::v8whatis\n");
@@ -6878,112 +7021,48 @@ dcmd_v8whatis(uintptr_t addr, uint_t flags, int argc, const mdb_arg_t *argv)
 		    maxoffset);
 	}
 
-	origaddr = addr;
-
-	/*
-	 * Objects will always be stored at pointer-aligned addresses.  If we're
-	 * given an address that's not pointer-aligned, clear the low bits to
-	 * find the pointer-sized value containing the address given.
-	 */
-	ptrlowbits = sizeof (uintptr_t) - 1;
-	addr &= ~ptrlowbits;
-	assert(addr <= origaddr && origaddr - addr < sizeof (uintptr_t));
-
-	/*
-	 * On top of that, set the heap object tag bits.  Recall that most
-	 * mdb_v8 commands interpret values the same way as V8: if the tag bits
-	 * are set, then this is a heap object; otherwise, it's not.  And this
-	 * command only makes sense for heap objects, so one might expect that
-	 * we would bail if we're given something else.  But in practice, this
-	 * command is expected to be chained with `::ugrep` or some other
-	 * command that reports heap objects without the tag bits set, so it
-	 * makes sense to just assume they were supposed to be set.
-	 */
-	addr |= V8_HeapObjectTag;
-	if (verbose && origaddr != addr) {
+	err = v8whatis(addr, maxoffset, &whatis);
+	if (verbose && whatis.v8w_origaddr != whatis.v8w_addr) {
 		mdb_warn("assuming heap object at %p\n", addr);
 	}
 
-	/*
-	 * At this point, we walk backwards from the address we're given looking
-	 * for something that looks like a V8 heap object.
-	 */
-	for (curoffset = 0; curoffset < maxoffset;
-	    curoffset += sizeof (uintptr_t)) {
-		curaddr = addr - curoffset;
-		assert(V8_IS_HEAPOBJECT(curaddr));
-
-		if (read_heap_ptr(&curvalue, curaddr,
-		    V8_OFF_HEAPOBJECT_MAP) != 0 ||
-		    read_typebyte(&typebyte, curvalue) != 0) {
-			/*
-			 * The address we're looking at was either unreadable,
-			 * or we could not follow its Map pointer to find the
-			 * type byte.  This cannot be a valid heap object
-			 * because every heap object has a Map pointer as its
-			 * first field.
-			 */
-			continue;
-		}
-
-		if (typebyte != V8_TYPE_MAP) {
-			/*
-			 * The address we're looking at refers to something
-			 * other than a Map.  Again, this cannot be the address
-			 * of a valid heap object.
-			 */
-			continue;
-		}
-
-		/*
-		 * We've found what looks like a valid Map object.  See if we
-		 * can read its type byte, too.  If not, this is likely garbage.
-		 */
-		if (read_typebyte(&typebyte, curaddr) != 0) {
-			continue;
-		}
-
-		break;
-	}
-
-	if (curoffset >= maxoffset) {
+	if (err == V8W_ERR_NOTFOUND) {
 		if (verbose) {
 			mdb_warn("%p: no heap object found in previous "
 			    "%u bytes\n", addr, maxoffset);
 		}
+
 		return (DCMD_OK);
 	}
 
-	/*
-	 * At this point, check to see if the address that we were given might
-	 * be contained in this object.  If not, that means we found a Map for a
-	 * heap object that doesn't contain our target address.  We could have
-	 * checked this in the loop above so that we'd keep walking backwards in
-	 * this case, but we assume that Map objects aren't likely to appear
-	 * inside the middle of other valid objects, and thus that if we found a
-	 * Map and its heap object doesn't contain our target address, then
-	 * we're done -- there is no heap object containing our target.
-	 */
-	if (obj_contains(curaddr, typebyte, addr, &contained,
-	    UM_SLEEP | UM_GC) == 0 && !contained) {
+	if (err == V8W_ERR_DOESNTCONTAIN) {
 		if (verbose) {
 			mdb_warn("%p: heap object found at %p "
 			    "(%p-0x%x, type %s) does not appear to contain "
-			    "%p\n", addr, curaddr, addr, curoffset,
-			    enum_lookup_str(v8_types, typebyte, "(unknown)"),
-			    addr);
+			    "%p\n", whatis.v8w_origaddr,
+			    whatis.v8w_baseaddr,
+			    whatis.v8w_origaddr,
+			    whatis.v8w_origaddr - whatis.v8w_baseaddr,
+			    enum_lookup_str(v8_types, whatis.v8w_basetype,
+			    "(unknown)"), addr);
 		}
+
 		return (DCMD_OK);
+	}
+
+	if (err != V8W_OK) {
+		return (DCMD_ERR);
 	}
 
 	if (!verbose) {
-		mdb_printf("%p\n", curaddr);
+		mdb_printf("%p\n", whatis.v8w_baseaddr);
 		return (DCMD_OK);
 	}
 
-	mdb_printf("%p (found Map at %p (%p-0x%x) for type %s)", curaddr,
-	    curaddr, origaddr, origaddr - curaddr,
-	    enum_lookup_str(v8_types, typebyte, "(unknown)"));
+	mdb_printf("%p (found Map at %p (%p-0x%x) for type %s)\n",
+	    whatis.v8w_baseaddr, whatis.v8w_baseaddr, whatis.v8w_origaddr,
+	    whatis.v8w_origaddr - whatis.v8w_baseaddr,
+	    enum_lookup_str(v8_types, whatis.v8w_basetype, "(unknown)"));
 	return (DCMD_OK);
 }
 
@@ -7239,6 +7318,9 @@ static const mdb_dcmd_t v8_mdb_dcmds[] = {
 	{ "jsconstructor", ":[-v]",
 		"print the constructor for a JavaScript object",
 		dcmd_jsconstructor },
+	{ "jsfindrefs", ":[-dv] [-l maxdepth]",
+		"find JavaScript values referencing a value",
+		dcmd_jsfindrefs, dcmd_jsfindrefs_help },
 	{ "jsframe", ":[-aiv] [-f function] [-p property] [-n numlines]",
 		"summarize a JavaScript stack frame", dcmd_jsframe },
 	{ "jsfunction", ":", "print information about a JavaScript function",

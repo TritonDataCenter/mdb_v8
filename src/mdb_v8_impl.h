@@ -43,6 +43,7 @@ int read_heap_array(uintptr_t, uintptr_t **, size_t *, int);
 int read_heap_maybesmi(uintptr_t *, uintptr_t, ssize_t);
 int read_heap_ptr(uintptr_t *, uintptr_t, ssize_t);
 int read_heap_smi(uintptr_t *, uintptr_t, ssize_t);
+int read_size(size_t *, uintptr_t);
 int read_typebyte(uint8_t *, uintptr_t);
 void v8_warn(const char *, ...);
 boolean_t jsobj_is_undefined(uintptr_t);
@@ -51,10 +52,12 @@ boolean_t jsobj_is_undefined(uintptr_t);
  * We need to find a better way of exposing this information.  For now, these
  * represent all the metadata constants used by multiple C files.
  */
-extern intptr_t V8_TYPE_JSARRAY;
-extern intptr_t V8_TYPE_JSFUNCTION;
-extern intptr_t V8_TYPE_JSBOUNDFUNCTION;
 extern intptr_t V8_TYPE_FIXEDARRAY;
+extern intptr_t V8_TYPE_JSARRAY;
+extern intptr_t V8_TYPE_JSBOUNDFUNCTION;
+extern intptr_t V8_TYPE_JSFUNCTION;
+extern intptr_t V8_TYPE_JSOBJECT;
+extern intptr_t V8_TYPE_MAP;
 
 extern intptr_t V8_IsNotStringMask;
 extern intptr_t V8_StringTag;
@@ -77,6 +80,7 @@ extern ssize_t V8_OFF_CONSSTRING_SECOND;
 extern ssize_t V8_OFF_EXTERNALSTRING_RESOURCE;
 extern ssize_t V8_OFF_FIXEDARRAY_DATA;
 extern ssize_t V8_OFF_FIXEDARRAY_LENGTH;
+extern ssize_t V8_OFF_HEAPOBJECT_MAP;
 extern ssize_t V8_OFF_JSARRAY_LENGTH;
 extern ssize_t V8_OFF_JSBOUNDFUNCTION_BOUND_ARGUMENTS;
 extern ssize_t V8_OFF_JSBOUNDFUNCTION_BOUND_TARGET_FUNCTION;
@@ -85,6 +89,7 @@ extern ssize_t V8_OFF_JSFUNCTION_CONTEXT;
 extern ssize_t V8_OFF_JSFUNCTION_LITERALS_OR_BINDINGS;
 extern ssize_t V8_OFF_JSFUNCTION_SHARED;
 extern ssize_t V8_OFF_JSOBJECT_ELEMENTS;
+extern ssize_t V8_OFF_MAP_INOBJECT_PROPERTIES;
 extern ssize_t V8_OFF_SCRIPT_LINE_ENDS;
 extern ssize_t V8_OFF_SCRIPT_NAME;
 extern ssize_t V8_OFF_SEQASCIISTR_CHARS;

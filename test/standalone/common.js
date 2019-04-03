@@ -190,11 +190,22 @@ MdbSession.prototype.checkMdbLeaks = function (callback)
  */
 function createMdbSessionFile(filename, callback)
 {
+	var envval, rmcore;
+
+	envval = process.env['MDBV8_TEST_KEEPCORE'];
+	if (envval !== undefined) {
+		envval = envval.toLowerCase();
+		rmcore = envval != 'true' && envval != '1' &&
+		    envval != 'yes';
+	} else {
+		rmcore = true;
+	}
+
 	return (createMdbSession({
 	    'targetType': 'file',
 	    'targetName': filename,
 	    'loadDmod': true,
-	    'removeOnSuccess': true
+	    'removeOnSuccess': rmcore
 	}, callback));
 }
 

@@ -332,4 +332,34 @@ int v8boundfunction_iter_args(v8boundfunction_t *,
     int (*)(v8boundfunction_t *, uint_t, uintptr_t, void *), void *);
 void v8boundfunction_free(v8boundfunction_t *);
 
+
+/*
+ * Higher-level functions.
+ */
+
+/*
+ * v8contains() attempts to determine whether a given V8 heap object contains a
+ * target address.
+ */
+int v8contains(uintptr_t, uint8_t, uintptr_t, boolean_t *);
+
+/*
+ * v8whatis() attempts to find the V8 heap object that contains the target
+ * address.
+ */
+typedef enum {
+	V8W_OK = 0,
+	V8W_ERR_NOTFOUND = 1,
+	V8W_ERR_DOESNTCONTAIN = 2
+} v8whatis_error_t;
+
+typedef struct {
+	uintptr_t	v8w_addr;	/* user-supplied address */
+	uintptr_t	v8w_origaddr;	/* adjusted address */
+	uintptr_t	v8w_baseaddr;	/* address of containing V8 object */
+	uint8_t		v8w_basetype;	/* type of containing V8 object */
+} v8whatis_t;
+
+v8whatis_error_t v8whatis(uintptr_t, size_t, v8whatis_t *);
+
 #endif	/* _MDBV8DBG_H */

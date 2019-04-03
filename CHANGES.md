@@ -10,10 +10,11 @@
 
 # mdb_v8 changelog
 
-## Unreleased changes
+## v1.4.0 (2018-03)
 
+* #107 would like dcmd for heuristically finding back references
 * #111 want `::v8whatis`
-* #112 stack corruption in jsobj_properties()
+* #112 stack corruption in jsobj\_properties()
 
 ## v1.3.0 (2018-02-09)
 
