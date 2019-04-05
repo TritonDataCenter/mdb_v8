@@ -5,12 +5,12 @@
 -->
 
 <!--
-    Copyright (c) 2018, Joyent, Inc.
+    Copyright (c) 2019, Joyent, Inc.
 -->
 
 # mdb_v8 changelog
 
-## v1.4.0 (2018-03)
+## v1.4.0 (2019-04)
 
 * #107 would like dcmd for heuristically finding back references
 * #111 want `::v8whatis`
