@@ -5,7 +5,7 @@
  */
 
 /*
- * Copyright (c) 2018, Joyent, Inc.
+ * Copyright 2019 Joyent, Inc.
  */
 
 /*
@@ -453,7 +453,7 @@ v8funcinfo_definition_location(v8funcinfo_t *fip, mdbv8_strbuf_t *strb,
 	 * into the script).
 	 */
 	if (fip->v8fi_line_endings == NULL) {
-		if (tokpos == V8_VALUE_SMI(-1)) {
+		if (tokpos == V8_VALUE_SMI((uintptr_t)-1)) {
 			mdbv8_strbuf_sprintf(strb, "unknown position");
 		} else {
 			/*

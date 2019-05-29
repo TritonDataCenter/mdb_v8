@@ -5,7 +5,7 @@
  */
 
 /*
- * Copyright (c) 2018, Joyent, Inc.
+ * Copyright 2019 Joyent, Inc.
  */
 
 /*
@@ -3216,7 +3216,7 @@ jsfunc_lineno(uintptr_t lendsp, uintptr_t tokpos,
 		 * we must convert it here, unless we're checking against the
 		 * "-1" sentinel.
 		 */
-		if (tokpos == V8_VALUE_SMI(-1))
+		if (tokpos == V8_VALUE_SMI((uintptr_t)-1))
 			mdb_snprintf(buf, buflen, "unknown position");
 		else
 			mdb_snprintf(buf, buflen, "position %d",
