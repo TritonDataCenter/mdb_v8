@@ -60,7 +60,7 @@ typedef struct v8_class {
 typedef struct v8_field {
 	struct v8_field	*v8f_next;	/* list linkage */
 	ssize_t		v8f_offset;	/* field offset */
-	char 		v8f_name[64];	/* field name */
+	char		v8f_name[64];	/* field name */
 	boolean_t	v8f_isbyte;	/* 1-byte int field */
 	boolean_t	v8f_isstr;	/* NUL-terminated string */
 } v8_field_t;
@@ -69,7 +69,7 @@ typedef struct v8_field {
  * Similarly, the "v8_enum" structure describes an enum from V8.
  */
 typedef struct {
-	char 	v8e_name[64];
+	char	v8e_name[64];
 	uint_t	v8e_value;
 } v8_enum_t;
 
@@ -80,10 +80,10 @@ typedef struct {
 static v8_class_t	*v8_classes;
 
 static v8_enum_t	v8_types[128];
-static int 		v8_next_type;
+static int		v8_next_type;
 
-static v8_enum_t 	v8_frametypes[16];
-static int 		v8_next_frametype;
+static v8_enum_t	v8_frametypes[16];
+static int		v8_next_frametype;
 
 static int		v8_warnings;
 static int		v8_silent;

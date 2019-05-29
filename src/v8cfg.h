@@ -5,7 +5,7 @@
  */
 
 /*
- * Copyright (c) 2012, Joyent, Inc.
+ * Copyright 2019 Joyent, Inc.
  */
 
 /*
@@ -19,13 +19,13 @@
 #include <sys/mdb_modapi.h>
 
 typedef struct {
-	const char 	*v8cs_name;	/* symbol name */
+	const char	*v8cs_name;	/* symbol name */
 	intptr_t	v8cs_value;	/* symbol value */
 } v8_cfg_symbol_t;
 
 typedef struct v8_cfg {
-	const char 	*v8cfg_name;	/* canned config name */
-	const char 	*v8cfg_label;	/* description */
+	const char	*v8cfg_name;	/* canned config name */
+	const char	*v8cfg_label;	/* description */
 	v8_cfg_symbol_t	*v8cfg_symbols;	/* actual symbol values */
 
 	int (*v8cfg_iter)(struct v8_cfg *, int (*)(mdb_symbol_t *, void *),
