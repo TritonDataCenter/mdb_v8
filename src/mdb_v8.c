@@ -82,7 +82,7 @@ static v8_class_t	*v8_classes;
 static v8_enum_t	v8_types[128];
 static int		v8_next_type;
 
-static v8_enum_t	v8_frametypes[16];
+static v8_enum_t	v8_frametypes[19];
 static int		v8_next_frametype;
 
 static int		v8_warnings;
