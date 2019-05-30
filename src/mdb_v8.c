@@ -242,32 +242,102 @@ ssize_t V8_OFF_JSARRAYBUFFER_BACKINGSTORE;
 ssize_t V8_OFF_JSARRAYBUFFERVIEW_BUFFER;
 ssize_t V8_OFF_JSARRAYBUFFERVIEW_CONTENT_OFFSET;
 
-#define	V8_CONSTANT_OPTIONAL		1
-#define	V8_CONSTANT_HASFALLBACK		2
-#define	V8_CONSTANT_REMOVED		4
-#define	V8_CONSTANT_ADDED		8
+/*
+ * Version  macros
+ *
+ * The following macros are commonly used to indicate the period of validity of
+ * symbols listed in v8_constants[] and v8_offsets[].
+ *
+ * V8_CONSTANT_OPTIONAL
+ *
+ *    Do not warn if this symbol is missing.
+ *
+ * V8_CONSTANT_ADDED_SINCE(V8V(maj[, min[, build[, patch]]]))
+ *
+ *    The symbol was added in V8 version maj.min.  May be ORed with
+ *    V8_CONSTANT_REMOVED_SINCE() to specify a range of validity.
+ *
+ * V8_CONSTANT_REMOVED_SINCE(V8V(maj[, min[, build[, patch]]]))
+ *
+ *    The symbol was removed in V8 version maj.min.  May be ORed with
+ *    V8_CONSTANT_ADDED_SINCE() to specify a range of validity.
+ *
+ * V8_CONSTANT_FALLBACK()
+ * V8_CONSTANT_FALLBACK_A(V8V(add_version))
+ * V8_CONSTANT_FALLBACK_AR(V8V(add_version), V8V(rem_version))
+ *
+ *    These are used to indicate that if the symbol is not found in the core
+ *    file that a fallback value is present and should be used.  The first
+ *    variant indicates that the same fallback applies to all versions.  The _A
+ *    variant is used to indicate that the fallback is added in the specified
+ *    version.  The _AR varient is used to indicate that the fallback was added
+ *    in one version and removed in another.  add_version and rem_version are as
+ *    shown in earlier V8V() examples.
+ *
+ *
+ * A symbol may change over time.  For instance, some symbols have a default
+ * value for a particular range of verions and a different value for other
+ * verions.  This can be handled with multiple entries in the v8_constants[] or
+ * v8_offsets[] arrays.
+ *
+ * As an example, this covers a fallback value for
+ * v8dbg_scopeinfo_idx_first_vars that is 4 from 3.7 (inclusive) to 4.3
+ * (exclusive), 5 from 4.3 to 4.5, and 6 in 4.5 and later.
+ *
+ *	{ &V8_SCOPEINFO_IDX_FIRST_VARS, "v8dbg_scopeinfo_idx_first_vars",
+ *	    V8_CONSTANT_FALLBACK_AR(V8V(3, 7), V8V(4, 3)), 4 },
+ *	{ &V8_SCOPEINFO_IDX_FIRST_VARS, "v8dbg_scopeinfo_idx_first_vars",
+ *	    V8_CONSTANT_FALLBACK_AR(V8V(4, 3), V8V(4, 5)), 5 },
+ *	{ &V8_SCOPEINFO_IDX_FIRST_VARS, "v8dbg_scopeinfo_idx_first_vars",
+ *	    V8_CONSTANT_FALLBACK_A(V8V(4, 5)), 6 },
+ */
 
-#define	V8_CONSTANT_MAJORSHIFT		4
-#define	V8_CONSTANT_MAJORMASK		((1 << 4) - 1)
-#define	V8_CONSTANT_MAJOR(flags)	\
-	(((flags) >> V8_CONSTANT_MAJORSHIFT) & V8_CONSTANT_MAJORMASK)
+typedef enum {
+	V8_CONSTANT_OPTIONAL	= 1,
+	V8_CONSTANT_HASFALLBACK = 2,
+} v8_const_flag_t;
 
-#define	V8_CONSTANT_MINORSHIFT		8
-#define	V8_CONSTANT_MINORMASK		((1 << 9) - 1)
-#define	V8_CONSTANT_MINOR(flags)	\
-	(((flags) >> V8_CONSTANT_MINORSHIFT) & V8_CONSTANT_MINORMASK)
+/*
+ * For defining a V8 version for V8_CONSTANT_* macros that take a version
+ * argument.  Most commonly called as V8V(major, minor), but may also be called
+ * as V8V(major, minor, build) or V8V(magjor, minor, build, patch).
+ */
+#define	V8V(...) { __VA_ARGS__ }
 
-#define	V8_CONSTANT_FALLBACK(maj, min) \
-	(V8_CONSTANT_OPTIONAL | V8_CONSTANT_HASFALLBACK | \
-	((maj) << V8_CONSTANT_MAJORSHIFT) | ((min) << V8_CONSTANT_MINORSHIFT))
+/*
+ * The following macros set the v8c_flags and v8c_life (same for v8o_*).
+ */
+#define	V8_CONSTANT_ADDED_SINCE(aver) \
+	0, { .v8l_added = aver, .v8l_removed = V8V(0) }
+#define	V8_CONSTANT_REMOVED_SINCE(rver) \
+	0, { .v8l_added = V8V(0), .v8l_removed = rver }
+#define	V8_CONSTANT_ADD_REM_SINCE(aver, rver) \
+	0, { .v8l_added = aver, .v8l_removed = rver }
 
-#define	V8_CONSTANT_REMOVED_SINCE(maj, min) \
-	(V8_CONSTANT_REMOVED | \
-	((maj) << V8_CONSTANT_MAJORSHIFT) | ((min) << V8_CONSTANT_MINORSHIFT))
+#define	V8_CONSTANT_FALLBACK() \
+	V8_CONSTANT_OPTIONAL | V8_CONSTANT_HASFALLBACK, \
+	{ .v8l_added = V8V(0), .v8l_removed = V8V(0) }
 
-#define	V8_CONSTANT_ADDED_SINCE(maj, min)	\
-	(V8_CONSTANT_ADDED | \
-	((maj) << V8_CONSTANT_MAJORSHIFT) | ((min) << V8_CONSTANT_MINORSHIFT))
+#define	V8_CONSTANT_FALLBACK_A(aver) \
+	V8_CONSTANT_OPTIONAL | V8_CONSTANT_HASFALLBACK, \
+	{ .v8l_added = aver, .v8l_removed = V8V(0) }
+
+#define	V8_CONSTANT_FALLBACK_AR(aver, rver) \
+	V8_CONSTANT_OPTIONAL | V8_CONSTANT_HASFALLBACK, \
+	{ .v8l_added = aver, .v8l_removed = rver }
+
+
+typedef struct {
+	uint16_t	v8v_major;
+	uint16_t	v8v_minor;
+	uint16_t	v8v_build;
+	uint16_t	v8v_patch;
+} v8_version_t;
+
+typedef struct {
+	v8_version_t	v8l_added;
+	v8_version_t	v8l_removed;
+} v8_const_life_t;
 
 /*
  * Table of constants used directly by this file.
@@ -275,7 +345,8 @@ ssize_t V8_OFF_JSARRAYBUFFERVIEW_CONTENT_OFFSET;
 typedef struct v8_constant {
 	intptr_t	*v8c_valp;
 	const char	*v8c_symbol;
-	uint32_t	v8c_flags;
+	v8_const_flag_t	v8c_flags;
+	v8_const_life_t	v8c_life;
 	intptr_t	v8c_fallback;
 } v8_constant_t;
 
@@ -283,14 +354,14 @@ static v8_constant_t v8_constants[] = {
 	{ &V8_OFF_FP_CONTEXT_OR_FRAME_TYPE,
 		"v8dbg_off_fp_context_or_frame_type",
 #ifdef _LP64
-		V8_CONSTANT_FALLBACK(5, 1), -0x8 },
+		V8_CONSTANT_FALLBACK_A(V8V(5, 1)), -0x8 },
 #else
-		V8_CONSTANT_FALLBACK(5, 1), -0x4 },
+		V8_CONSTANT_FALLBACK_A(V8V(5, 1)), -0x4 },
 #endif
 	{ &V8_OFF_FP_CONTEXT,		"v8dbg_off_fp_context"		},
 	{ &V8_OFF_FP_FUNCTION,		"v8dbg_off_fp_function"		},
 	{ &V8_OFF_FP_MARKER,		"v8dbg_off_fp_marker",
-	    V8_CONSTANT_REMOVED_SINCE(5, 1)		},
+	    V8_CONSTANT_REMOVED_SINCE(V8V(5, 1))		},
 	{ &V8_OFF_FP_ARGS,		"v8dbg_off_fp_args"		},
 
 	{ &V8_FirstNonstringType,	"v8dbg_FirstNonstringType"	},
@@ -300,19 +371,19 @@ static v8_constant_t v8_constants[] = {
 	{ &V8_StringEncodingMask,	"v8dbg_StringEncodingMask"	},
 	{ &V8_TwoByteStringTag,		"v8dbg_TwoByteStringTag"	},
 	{ &V8_AsciiStringTag,		"v8dbg_AsciiStringTag",
-	    V8_CONSTANT_REMOVED_SINCE(3, 29) },
+	    V8_CONSTANT_REMOVED_SINCE(V8V(3, 29)) },
 	{ &V8_OneByteStringTag,		"v8dbg_OneByteStringTag",
-	    V8_CONSTANT_ADDED_SINCE(3, 29) },
+	    V8_CONSTANT_ADDED_SINCE(V8V(3, 29)) },
 	{ &V8_StringRepresentationMask,	"v8dbg_StringRepresentationMask" },
 	{ &V8_SeqStringTag,		"v8dbg_SeqStringTag"		},
 	{ &V8_ConsStringTag,		"v8dbg_ConsStringTag"		},
 	{ &V8_SlicedStringTag,		"v8dbg_SlicedStringTag",
-	    V8_CONSTANT_FALLBACK(0, 0), 0x3 },
+	    V8_CONSTANT_FALLBACK(), 0x3 },
 	{ &V8_ExternalStringTag,	"v8dbg_ExternalStringTag"	},
 	{ &V8_FailureTag,		"v8dbg_FailureTag",
-		V8_CONSTANT_REMOVED_SINCE(3, 28) },
+	    V8_CONSTANT_REMOVED_SINCE(V8V(3, 28)) },
 	{ &V8_FailureTagMask,		"v8dbg_FailureTagMask",
-		V8_CONSTANT_REMOVED_SINCE(3, 28) },
+	    V8_CONSTANT_REMOVED_SINCE(V8V(3, 28)) },
 	{ &V8_HeapObjectTag,		"v8dbg_HeapObjectTag"		},
 	{ &V8_HeapObjectTagMask,	"v8dbg_HeapObjectTagMask"	},
 	{ &V8_SmiTag,			"v8dbg_SmiTag"			},
@@ -320,86 +391,100 @@ static v8_constant_t v8_constants[] = {
 	{ &V8_SmiValueShift,		"v8dbg_SmiValueShift"		},
 	{ &V8_SmiShiftSize,		"v8dbg_SmiShiftSize",
 #ifdef _LP64
-	    V8_CONSTANT_FALLBACK(0, 0), 31 },
+	    V8_CONSTANT_FALLBACK(), 31 },
 #else
-	    V8_CONSTANT_FALLBACK(0, 0), 0 },
+	    V8_CONSTANT_FALLBACK(), 0 },
 #endif
 	{ &V8_PointerSizeLog2,		"v8dbg_PointerSizeLog2"		},
 
 	{ &V8_DICT_SHIFT,		"v8dbg_bit_field3_dictionary_map_shift",
-	    V8_CONSTANT_FALLBACK(3, 13), 24 },
+	    V8_CONSTANT_FALLBACK_A(V8V(3, 13)), 24 },
 	{ &V8_DICT_PREFIX_SIZE,		"v8dbg_dict_prefix_size",
-	    V8_CONSTANT_FALLBACK(3, 11), 2 },
+	    V8_CONSTANT_FALLBACK_A(V8V(3, 11)), 2 },
 	{ &V8_DICT_ENTRY_SIZE,		"v8dbg_dict_entry_size",
-	    V8_CONSTANT_FALLBACK(3, 11), 3 },
+	    V8_CONSTANT_FALLBACK_A(V8V(3, 11)), 3 },
 	{ &V8_DICT_START_INDEX,		"v8dbg_dict_start_index",
-	    V8_CONSTANT_FALLBACK(3, 11), 3 },
+	    V8_CONSTANT_FALLBACK_A(V8V(3, 11)), 3 },
 	{ &V8_PROPINDEX_MASK,		"v8dbg_prop_index_mask",
-	    V8_CONSTANT_FALLBACK(3, 26), 0x3ff00000 },
+	    V8_CONSTANT_FALLBACK_A(V8V(3, 26)), 0x3ff00000 },
 	{ &V8_PROPINDEX_SHIFT,		"v8dbg_prop_index_shift",
-	    V8_CONSTANT_FALLBACK(3, 26), 20 },
+	    V8_CONSTANT_FALLBACK_A(V8V(3, 26)), 20 },
 	{ &V8_ISSHARED_SHIFT,		"v8dbg_isshared_shift",
-	    V8_CONSTANT_FALLBACK(3, 11), 0 },
+	    V8_CONSTANT_FALLBACK_A(V8V(3, 11)), 0 },
 	{ &V8_PROP_IDX_FIRST,		"v8dbg_prop_idx_first"		},
 	{ &V8_PROP_TYPE_FIELD,		"v8dbg_prop_type_field"		},
 	{ &V8_PROP_TYPE_MASK,		"v8dbg_prop_type_mask"		},
 	{ &V8_PROP_IDX_CONTENT,		"v8dbg_prop_idx_content",
 	    V8_CONSTANT_OPTIONAL },
 	{ &V8_PROP_DESC_KEY,		"v8dbg_prop_desc_key",
-	    V8_CONSTANT_FALLBACK(0, 0), 0 },
+	    V8_CONSTANT_FALLBACK(), 0 },
 	{ &V8_PROP_DESC_DETAILS,	"v8dbg_prop_desc_details",
-	    V8_CONSTANT_FALLBACK(0, 0), 1 },
+	    V8_CONSTANT_FALLBACK(), 1 },
 	{ &V8_PROP_DESC_VALUE,		"v8dbg_prop_desc_value",
-	    V8_CONSTANT_FALLBACK(0, 0), 2 },
+	    V8_CONSTANT_FALLBACK(), 2 },
 	{ &V8_PROP_DESC_SIZE,		"v8dbg_prop_desc_size",
-	    V8_CONSTANT_FALLBACK(0, 0), 3 },
+	    V8_CONSTANT_FALLBACK(), 3 },
 	{ &V8_TRANSITIONS_IDX_DESC,	"v8dbg_transitions_idx_descriptors",
 	    V8_CONSTANT_OPTIONAL },
 
 	{ &V8_ELEMENTS_KIND_SHIFT,	"v8dbg_elements_kind_shift",
-	    V8_CONSTANT_FALLBACK(0, 0), 3 },
+	    V8_CONSTANT_FALLBACK(), 3 },
 	{ &V8_ELEMENTS_KIND_BITCOUNT,	"v8dbg_elements_kind_bitcount",
-	    V8_CONSTANT_FALLBACK(0, 0), 5 },
+	    V8_CONSTANT_FALLBACK(), 5 },
 	{ &V8_ELEMENTS_FAST_ELEMENTS,
 	    "v8dbg_elements_fast_elements",
-	    V8_CONSTANT_FALLBACK(0, 0), 2 },
+	    V8_CONSTANT_FALLBACK(), 2 },
 	{ &V8_ELEMENTS_FAST_HOLEY_ELEMENTS,
 	    "v8dbg_elements_fast_holey_elements",
-	    V8_CONSTANT_FALLBACK(0, 0), 3 },
+	    V8_CONSTANT_FALLBACK(), 3 },
 	{ &V8_ELEMENTS_DICTIONARY_ELEMENTS,
 	    "v8dbg_elements_dictionary_elements",
-	    V8_CONSTANT_FALLBACK(0, 0), 6 },
+	    V8_CONSTANT_FALLBACK(), 6 },
 
 	{ &V8_CONTEXT_NCOMMON, "v8dbg_context_ncommon",
-	    V8_CONSTANT_FALLBACK(0, 0), 4 },
+	    V8_CONSTANT_FALLBACK(), 4 },
 	{ &V8_CONTEXT_IDX_CLOSURE, "v8dbg_context_idx_closure",
-	    V8_CONSTANT_FALLBACK(0, 0), 0 },
+	    V8_CONSTANT_FALLBACK(), 0 },
 	{ &V8_CONTEXT_IDX_PREV, "v8dbg_context_idx_prev",
-	    V8_CONSTANT_FALLBACK(0, 0), 1 },
+	    V8_CONSTANT_FALLBACK(), 1 },
 	{ &V8_CONTEXT_IDX_EXT, "v8dbg_context_idx_ext",
-	    V8_CONSTANT_FALLBACK(0, 0), 2 },
+	    V8_CONSTANT_FALLBACK(), 2 },
 	{ &V8_CONTEXT_IDX_GLOBAL, "v8dbg_context_idx_global",
-	    V8_CONSTANT_FALLBACK(0, 0), 3 },
+	    V8_CONSTANT_FALLBACK(), 3 },
 	/*
 	 * https://codereview.chromium.org/1480003002, which replaces the link
 	 * from a context to the global object with a link to the native
 	 * context, landed in V8 4.9.88.
 	 */
 	{ &V8_CONTEXT_IDX_NATIVE, "v8dbg_context_idx_native",
-	    V8_CONSTANT_FALLBACK(4, 9), 3 },
+	    V8_CONSTANT_FALLBACK_A(V8V(4, 9)), 3 },
 
 	{ &V8_SCOPEINFO_IDX_NPARAMS, "v8dbg_scopeinfo_idx_nparams",
-	    V8_CONSTANT_FALLBACK(3, 7), 1 },
+	    V8_CONSTANT_FALLBACK_A(V8V(3, 7)), 1 },
 	{ &V8_SCOPEINFO_IDX_NSTACKLOCALS, "v8dbg_scopeinfo_idx_nstacklocals",
-	    V8_CONSTANT_FALLBACK(3, 7), 2 },
+	    V8_CONSTANT_FALLBACK_A(V8V(3, 7)), 2 },
 	{ &V8_SCOPEINFO_OFFSET_STACK_LOCALS,
-		"v8dbg_scopeinfo_offset_stack_locals",
-	    V8_CONSTANT_FALLBACK(4, 4), 1 },
+	    "v8dbg_scopeinfo_offset_stack_locals",
+	    V8_CONSTANT_FALLBACK_A(V8V(4, 4)), 1 },
 	{ &V8_SCOPEINFO_IDX_NCONTEXTLOCALS,
 	    "v8dbg_scopeinfo_idx_ncontextlocals",
-	    V8_CONSTANT_FALLBACK(3, 7), 3 },
+	    V8_CONSTANT_FALLBACK_A(V8V(3, 7)), 3 },
+	/*
+	 * V8_SCOPEINFO_IDX_FIRST_VARS' value was 4 in V8 3.7 and up,
+	 * then 5 when StrongModeFreeVariableCount was added with
+	 * https://codereview.chromium.org/1005063002, and 6 when
+	 * ContextGlobalCount was added with
+	 * https://codereview.chromium.org/1218783005.
+	 * Since the current V8_CONSTANT_FALLBACK macro doesn't allow
+	 * us to specify different values for different V8 versions,
+	 * these are hardcoded below.
+	 */
 	{ &V8_SCOPEINFO_IDX_FIRST_VARS, "v8dbg_scopeinfo_idx_first_vars",
-	    V8_CONSTANT_FALLBACK(4, 5), 6 },
+	    V8_CONSTANT_FALLBACK_AR(V8V(3, 7), V8V(4, 3)), 4 },
+	{ &V8_SCOPEINFO_IDX_FIRST_VARS, "v8dbg_scopeinfo_idx_first_vars",
+	    V8_CONSTANT_FALLBACK_AR(V8V(4, 3), V8V(4, 5)), 5 },
+	{ &V8_SCOPEINFO_IDX_FIRST_VARS, "v8dbg_scopeinfo_idx_first_vars",
+	    V8_CONSTANT_FALLBACK_A(V8V(4, 5)), 6 },
 };
 
 static int v8_nconstants = sizeof (v8_constants) / sizeof (v8_constants[0]);
@@ -409,7 +494,8 @@ typedef struct v8_offset {
 	const char	*v8o_class;
 	const char	*v8o_member;
 	boolean_t	v8o_optional;
-	uint32_t	v8o_flags;
+	v8_const_flag_t	v8o_flags;
+	v8_const_life_t	v8o_life;
 	intptr_t	v8o_fallback;
 } v8_offset_t;
 
@@ -439,19 +525,19 @@ static v8_offset_t v8_offsets[] = {
 
 	{ &V8_OFF_JSBOUNDFUNCTION_BOUND_ARGUMENTS,
 	    "JSBoundFunction", "bound_arguments", B_FALSE,
-	    V8_CONSTANT_ADDED_SINCE(4, 9) },
+	    V8_CONSTANT_ADDED_SINCE(V8V(4, 9)) },
 	{ &V8_OFF_JSBOUNDFUNCTION_BOUND_TARGET_FUNCTION,
 	    "JSBoundFunction", "bound_target_function", B_FALSE,
-	    V8_CONSTANT_ADDED_SINCE(4, 9) },
+	    V8_CONSTANT_ADDED_SINCE(V8V(4, 9)) },
 	{ &V8_OFF_JSBOUNDFUNCTION_BOUND_THIS,
 	    "JSBoundFunction", "bound_this", B_FALSE,
-	    V8_CONSTANT_ADDED_SINCE(4, 9) },
+	    V8_CONSTANT_ADDED_SINCE(V8V(4, 9)) },
 
 	{ &V8_OFF_JSFUNCTION_CONTEXT,
 	    "JSFunction", "context", B_TRUE },
 	{ &V8_OFF_JSFUNCTION_LITERALS_OR_BINDINGS,
 	    "JSFunction", "literals_or_bindings", B_FALSE,
-	    V8_CONSTANT_REMOVED_SINCE(4, 9) },
+	    V8_CONSTANT_REMOVED_SINCE(V8V(4, 9)) },
 	{ &V8_OFF_JSFUNCTION_SHARED,
 	    "JSFunction", "shared" },
 	{ &V8_OFF_JSOBJECT_ELEMENTS,
@@ -462,29 +548,29 @@ static v8_offset_t v8_offsets[] = {
 	 */
 	{ &V8_OFF_JSOBJECT_PROPERTIES,
 	    "JSObject", "properties", B_FALSE,
-		V8_CONSTANT_REMOVED_SINCE(4, 9) },
+		V8_CONSTANT_REMOVED_SINCE(V8V(4, 9)) },
 	{ &V8_OFF_JSRECEIVER_PROPERTIES,
 	    "JSReceiver", "properties", B_FALSE,
-		V8_CONSTANT_ADDED_SINCE(4, 9) },
+		V8_CONSTANT_ADDED_SINCE(V8V(4, 9)) },
 	{ &V8_OFF_JSREGEXP_DATA,
 	    "JSRegExp", "data", B_TRUE },
 	{ &V8_OFF_MAP_CONSTRUCTOR,
 	    "Map", "constructor",
-	    B_FALSE, V8_CONSTANT_REMOVED_SINCE(4, 3)},
+	    B_FALSE, V8_CONSTANT_REMOVED_SINCE(V8V(4, 3))},
 	{ &V8_OFF_MAP_CONSTRUCTOR_OR_BACKPOINTER,
 	    "Map", "constructor_or_backpointer",
-	    B_FALSE, V8_CONSTANT_ADDED_SINCE(4, 3)},
+	    B_FALSE, V8_CONSTANT_ADDED_SINCE(V8V(4, 3))},
 	{ &V8_OFF_MAP_INOBJECT_PROPERTIES,
 	    "Map", "inobject_properties",
-	    B_FALSE, V8_CONSTANT_REMOVED_SINCE(4, 6) },
+	    B_FALSE, V8_CONSTANT_REMOVED_SINCE(V8V(4, 6)) },
 #ifdef _LP64
 	{ &V8_OFF_MAP_INOBJECT_PROPERTIES_OR_CTOR_FUN_INDEX,
 	    "Map", "inobject_properties_or_constructor_function_index",
-	    B_FALSE, V8_CONSTANT_FALLBACK(4, 6), 8 },
+	    B_FALSE, V8_CONSTANT_FALLBACK_A(V8V(4, 6)), 8 },
 #else
 	{ &V8_OFF_MAP_INOBJECT_PROPERTIES_OR_CTOR_FUN_INDEX,
 	    "Map", "inobject_properties_or_constructor_function_index",
-	    B_FALSE, V8_CONSTANT_FALLBACK(4, 6), 4 },
+	    B_FALSE, V8_CONSTANT_FALLBACK_A(V8V(4, 6)), 4 },
 #endif
 	{ &V8_OFF_MAP_INSTANCE_ATTRIBUTES,
 	    "Map", "instance_attributes" },
@@ -523,16 +609,16 @@ static v8_offset_t v8_offsets[] = {
 	{ &V8_OFF_SHAREDFUNCTIONINFO_FUNCTION_TOKEN_POSITION,
 	    "SharedFunctionInfo", "function_token_position" },
 	{ &V8_OFF_SHAREDFUNCTIONINFO_INFERRED_NAME,
-	    "SharedFunctionInfo", "inferred_name",
-		V8_CONSTANT_REMOVED_SINCE(5, 1) },
+	    "SharedFunctionInfo", "inferred_name", B_FALSE,
+		V8_CONSTANT_REMOVED_SINCE(V8V(5, 1)) },
 #ifdef _LP64
 	{ &V8_OFF_SHAREDFUNCTIONINFO_IDENTIFIER,
-	    "SharedFunctionInfo", "function_identifier",
-		V8_CONSTANT_FALLBACK(5, 1), 79},
+	    "SharedFunctionInfo", "function_identifier", B_TRUE,
+		V8_CONSTANT_FALLBACK_A(V8V(5, 1)), 79},
 #else
 	{ &V8_OFF_SHAREDFUNCTIONINFO_IDENTIFIER,
-	    "SharedFunctionInfo", "function_identifier",
-		V8_CONSTANT_FALLBACK(5, 1), 39},
+	    "SharedFunctionInfo", "function_identifier", B_TRUE,
+		V8_CONSTANT_FALLBACK_A(V8V(5, 1)), 39},
 #endif
 	{ &V8_OFF_SHAREDFUNCTIONINFO_LENGTH,
 	    "SharedFunctionInfo", "length" },
@@ -551,47 +637,47 @@ static v8_offset_t v8_offsets[] = {
 #ifdef _LP64
 	{ &V8_OFF_JSTYPEDARRAY_LENGTH,
 	    "JSTypedArray", "length",
-	    B_FALSE, V8_CONSTANT_FALLBACK(4, 5), 55 },
+	    B_FALSE, V8_CONSTANT_FALLBACK_A(V8V(4, 5)), 55 },
 #else
 	{ &V8_OFF_JSTYPEDARRAY_LENGTH,
 	    "JSTypedArray", "length",
-	    B_FALSE, V8_CONSTANT_FALLBACK(4, 5), 27 },
+	    B_FALSE, V8_CONSTANT_FALLBACK_A(V8V(4, 5)), 27 },
 #endif
 #ifdef _LP64
 	{ &V8_OFF_JSARRAYBUFFER_BACKINGSTORE,
 	    "JSArrayBuffer", "backing_store",
-	    B_FALSE, V8_CONSTANT_FALLBACK(4, 6), 23 },
+	    B_FALSE, V8_CONSTANT_FALLBACK_A(V8V(4, 6)), 23 },
 #else
 	{ &V8_OFF_JSARRAYBUFFER_BACKINGSTORE,
 	    "JSArrayBuffer", "backing_store",
-	    B_FALSE, V8_CONSTANT_FALLBACK(4, 6), 11 },
+	    B_FALSE, V8_CONSTANT_FALLBACK_A(V8V(4, 6)), 11 },
 #endif
 #ifdef _LP64
 	{ &V8_OFF_JSARRAYBUFFERVIEW_BUFFER,
 	    "JSArrayBufferView", "buffer",
-	    B_FALSE, V8_CONSTANT_FALLBACK(3, 20), 23 },
+	    B_FALSE, V8_CONSTANT_FALLBACK_A(V8V(3, 20)), 23 },
 #else
 	{ &V8_OFF_JSARRAYBUFFERVIEW_BUFFER,
 	    "JSArrayBufferView", "buffer",
-	    B_FALSE, V8_CONSTANT_FALLBACK(3, 20), 11 },
+	    B_FALSE, V8_CONSTANT_FALLBACK_A(V8V(3, 20)), 11 },
 #endif
 #ifdef _LP64
 	{ &V8_OFF_JSARRAYBUFFERVIEW_CONTENT_OFFSET,
 	    "JSArrayBufferView", "byte_offset",
-	    B_FALSE, V8_CONSTANT_FALLBACK(4, 6), 31 },
+	    B_FALSE, V8_CONSTANT_FALLBACK_A(V8V(4, 6)), 31 },
 #else
 	{ &V8_OFF_JSARRAYBUFFERVIEW_CONTENT_OFFSET,
 	    "JSArrayBufferView", "byte_offset",
-	    B_FALSE, V8_CONSTANT_FALLBACK(4, 6), 15 },
+	    B_FALSE, V8_CONSTANT_FALLBACK_A(V8V(4, 6)), 15 },
 #endif
 };
 
 static int v8_noffsets = sizeof (v8_offsets) / sizeof (v8_offsets[0]);
 
-static uintptr_t v8_major;
-static uintptr_t v8_minor;
-static uintptr_t v8_build;
-static uintptr_t v8_patch;
+static uint32_t v8_major;
+static uint32_t v8_minor;
+static uint32_t v8_build;
+static uint32_t v8_patch;
 
 static int autoconf_iter_symbol(mdb_symbol_t *, void *);
 static v8_class_t *conf_class_findcreate(const char *);
@@ -695,27 +781,52 @@ static int jsobj_layout_load(jsobj_layout_t *, uintptr_t);
 static boolean_t jsobj_layout_untagged(jsobj_layout_t *, uintptr_t);
 
 /*
- * Returns 1 if the V8 version v8_major.v8.minor is strictly older than
- * the V8 version represented by "flags".
- * Returns 0 otherwise.
+ * Convert major, minor, build triple into an integer that is easy to compare
  */
-static int
-v8_version_older(uintptr_t v8_major, uintptr_t v8_minor, uint32_t flags) {
-	return (v8_major < V8_CONSTANT_MAJOR(flags) ||
-	    (v8_major == V8_CONSTANT_MAJOR(flags) &&
-	    v8_minor < V8_CONSTANT_MINOR(flags)));
+static inline uint64_t
+mkver(uint32_t major, uint32_t minor, uint32_t build, uint32_t patch)
+{
+	v8_version_t dummy;
+	const uint32_t majbits = sizeof (dummy.v8v_major) << 3;
+	const uint32_t minbits = sizeof (dummy.v8v_minor) << 3;
+	const uint32_t bldbits = sizeof (dummy.v8v_build) << 3;
+	const uint32_t patbits = sizeof (dummy.v8v_patch) << 3;
+
+	if (major > ((1 << majbits) - 1) ||
+	    minor > ((1 << minbits) - 1) ||
+	    build > ((1 << bldbits) - 1) ||
+	    patch > ((1 << patbits) - 1)) {
+		mdb_warn("invalid V8 version %u.%u.%u.%u\n", major, minor,
+		    build, patch);
+		return (0);
+	}
+	return (((uint64_t)major << ((uint64_t)minbits + bldbits + patbits)) |
+	    ((uint64_t)minor << (bldbits + patbits)) |
+	    ((uint64_t)build << patbits) | (uint64_t)patch);
 }
 
 /*
- * Returns 1 if the V8 version v8_major.v8.minor is newer or equal than
- * the V8 version represented by "flags".
- * Returns 0 otherwise.
+ * Convert v8_version_t into an integer that is easy to compare
  */
-static int
-v8_version_at_least(uintptr_t v8_major, uintptr_t v8_minor, uint32_t flags) {
-	return (v8_major > V8_CONSTANT_MAJOR(flags) ||
-	    (v8_major == V8_CONSTANT_MAJOR(flags) &&
-	    v8_minor >= V8_CONSTANT_MINOR(flags)));
+static inline uint64_t
+mkver_l(const v8_version_t *ver)
+{
+	return (mkver(ver->v8v_major, ver->v8v_minor, ver->v8v_build,
+	    ver->v8v_patch));
+}
+
+/*
+ * Returns true if (v8_major, v8_minor, v8_build) is within the period contained
+ * in the provided v8_const_life_t.  A removed version of 0.0.0.0 indicates it
+ * has not been removed.
+ */
+static boolean_t
+v8_version_active(const v8_const_life_t *life) {
+	uint64_t v8_version = mkver(v8_major, v8_minor, v8_build, v8_patch);
+	uint64_t added = mkver_l(&life->v8l_added);
+	uint64_t removed = mkver_l(&life->v8l_removed);
+
+	return (v8_version >= added && (removed == 0 || v8_version < removed));
 }
 
 /*
@@ -723,13 +834,13 @@ v8_version_at_least(uintptr_t v8_major, uintptr_t v8_minor, uint32_t flags) {
  * than the specified version.
  */
 static boolean_t
-v8_version_current_older(uintptr_t major, uintptr_t minor, uintptr_t build,
-    uintptr_t patch)
+v8_version_current_older(uint32_t major, uint32_t minor, uint32_t build,
+    uint32_t patch)
 {
-	return (v8_major < major || (v8_major == major &&
-	    (v8_minor < minor || (v8_minor == minor &&
-	    (v8_build < build || (v8_build == build &&
-	    v8_patch < patch))))));
+	uint64_t v8_version = mkver(v8_major, v8_minor, v8_build, v8_patch);
+	uint64_t version = mkver(major, minor, build, patch);
+
+	return (v8_version < version);
 }
 
 /*
@@ -744,10 +855,6 @@ autoconfigure(v8_cfg_t *cfgp)
 	struct v8_constant *cnp;
 	int ii;
 	int failed = 0;
-	int constant_optional, constant_removed, constant_added;
-	int offset_optional, offset_removed, offset_added;
-	int offset_fallback;
-	int v8_older, v8_at_least;
 
 	assert(v8_classes == NULL);
 
@@ -773,43 +880,39 @@ autoconfigure(v8_cfg_t *cfgp)
 
 	/*
 	 * Load various constants used directly in the module.
+	 *
+	 * Constants may be removed then added with a different meaning, or the
+	 * fallback value may change.  We first initialize all of the values to
+	 * -1 as an indicator that they have invalid data.  The loop that
+	 * follows this will only add the value read from a symbol or the
+	 * fallback value.
 	 */
 	for (ii = 0; ii < v8_nconstants; ii++) {
+		*v8_constants[ii].v8c_valp = -1;
+	}
+
+	for (ii = 0; ii < v8_nconstants; ii++) {
 		cnp = &v8_constants[ii];
+
+		if (!v8_version_active(&cnp->v8c_life)) {
+			continue;
+		}
 
 		if (cfgp->v8cfg_readsym(cfgp,
 		    cnp->v8c_symbol, cnp->v8c_valp) != -1) {
 			continue;
 		}
 
-		constant_optional = cnp->v8c_flags & V8_CONSTANT_OPTIONAL;
-		constant_removed = cnp->v8c_flags & V8_CONSTANT_REMOVED;
-		constant_added = cnp->v8c_flags & V8_CONSTANT_ADDED;
-		v8_older = v8_version_older(v8_major, v8_minor, cnp->v8c_flags);
-		v8_at_least = v8_version_at_least(v8_major,
-		    v8_minor, cnp->v8c_flags);
-
-		if (!constant_optional &&
-		    (!constant_removed || v8_older) &&
-		    (!constant_added || v8_at_least)) {
-			mdb_warn("failed to read \"%s\"", cnp->v8c_symbol);
+		if ((cnp->v8c_flags & V8_CONSTANT_OPTIONAL) == 0) {
+			mdb_warn("failed to read required constant '%s'\n",
+			    cnp->v8c_symbol);
 			failed++;
 			continue;
 		}
 
-		if (!(cnp->v8c_flags & V8_CONSTANT_HASFALLBACK) ||
-		    v8_major < V8_CONSTANT_MAJOR(cnp->v8c_flags) ||
-		    (v8_major == V8_CONSTANT_MAJOR(cnp->v8c_flags) &&
-		    v8_minor < V8_CONSTANT_MINOR(cnp->v8c_flags))) {
-			*cnp->v8c_valp = -1;
-			continue;
+		if ((cnp->v8c_flags & V8_CONSTANT_HASFALLBACK) != 0) {
+			*cnp->v8c_valp = cnp->v8c_fallback;
 		}
-
-		/*
-		 * We have a fallback -- and we know that the version satisfies
-		 * the fallback's version constraints; use the fallback value.
-		 */
-		*cnp->v8c_valp = cnp->v8c_fallback;
 	}
 
 	/*
@@ -936,14 +1039,28 @@ autoconfigure(v8_cfg_t *cfgp)
 
 	/*
 	 * Finally, load various class offsets.
+	*
+	 * Class offsets may change over time.  We first initialize all of the
+	 * values to -1 as an indicator that they have invalid data.  The loop
+	 * that follows this will only add the value read from a symbol or the
+	 * fallback value.
 	 */
+	for (ii = 0; ii < v8_noffsets; ii++) {
+		*v8_offsets[ii].v8o_valp = -1;
+	}
+
 	for (ii = 0; ii < v8_noffsets; ii++) {
 		struct v8_offset *offp = &v8_offsets[ii];
 		const char *klass = offp->v8o_class;
 
-again:
-		if (heap_offset(klass, offp->v8o_member, offp->v8o_valp) == 0)
+		if (!v8_version_active(&offp->v8o_life)) {
 			continue;
+		}
+
+again:
+		if (heap_offset(klass, offp->v8o_member, offp->v8o_valp) == 0) {
+			continue;
+		}
 
 		if (strcmp(klass, "FixedArray") == 0) {
 			/*
@@ -958,46 +1075,25 @@ again:
 		}
 
 		if (offp->v8o_optional) {
-			*offp->v8o_valp = -1;
 			continue;
 		}
 
-		offset_optional = offp->v8o_flags & V8_CONSTANT_OPTIONAL;
-		offset_removed = offp->v8o_flags & V8_CONSTANT_REMOVED;
-		offset_added = offp->v8o_flags & V8_CONSTANT_ADDED;
-		v8_older = v8_version_older(v8_major,
-		    v8_minor, offp->v8o_flags);
-		v8_at_least = v8_version_at_least(v8_major,
-		    v8_minor, offp->v8o_flags);
-
-		if (!offset_optional &&
-		    (!offset_removed || v8_older) &&
-		    (!offset_added || v8_at_least)) {
+		if ((offp->v8o_flags & V8_CONSTANT_OPTIONAL) == 0) {
 			mdb_warn("couldn't find class \"%s\", field \"%s\"\n",
 			    offp->v8o_class, offp->v8o_member);
 			failed++;
 		}
 
-		offset_fallback = offp->v8o_flags & V8_CONSTANT_HASFALLBACK;
-		if (!offset_fallback ||
-		    v8_major < V8_CONSTANT_MAJOR(offp->v8o_flags) ||
-		    (v8_major == V8_CONSTANT_MAJOR(offp->v8o_flags) &&
-		    v8_minor < V8_CONSTANT_MINOR(offp->v8o_flags))) {
-			*offp->v8o_valp = -1;
-			continue;
+		if ((offp->v8o_flags & V8_CONSTANT_HASFALLBACK) != 0) {
+			*offp->v8o_valp = offp->v8o_fallback;
 		}
-
-		/*
-		 * We have a fallback -- and we know that the version satisfies
-		 * the fallback's version constraints; use the fallback value.
-		 */
-		*offp->v8o_valp = offp->v8o_fallback;
 	}
 
 	if (!((V8_OFF_SEQASCIISTR_CHARS != -1) ^
 	    (V8_OFF_SEQONEBYTESTR_CHARS != -1))) {
-		mdb_warn("expected exactly one of SeqAsciiString and "
-		    "SeqOneByteString to be defined\n");
+		mdb_warn("expected exactly one of SeqAsciiString (%d) and "
+		    "SeqOneByteString (%d) to be defined\n",
+		    V8_OFF_SEQASCIISTR_CHARS, V8_OFF_SEQONEBYTESTR_CHARS);
 		failed++;
 	}
 
@@ -1034,24 +1130,6 @@ again:
 
 	if (V8_OFF_MAP_BIT_FIELD2 == -1)
 		V8_OFF_MAP_BIT_FIELD2 = V8_OFF_MAP_INSTANCE_ATTRIBUTES + 3;
-
-	/*
-	 * V8_SCOPEINFO_IDX_FIRST_VARS' value was 4 in V8 3.7 and up,
-	 * then 5 when StrongModeFreeVariableCount was added with
-	 * https://codereview.chromium.org/1005063002, and 6 when
-	 * ContextGlobalCount was added with
-	 * https://codereview.chromium.org/1218783005.
-	 * Since the current V8_CONSTANT_FALLBACK macro doesn't allow
-	 * us to specify different values for different V8 versions,
-	 * these are hardcoded below.
-	 */
-	if (V8_SCOPEINFO_IDX_FIRST_VARS == -1) {
-		if (v8_major > 4 || (v8_major == 4 && v8_minor >= 3)) {
-			V8_SCOPEINFO_IDX_FIRST_VARS = 5;
-		} else if (v8_major > 3 || (v8_major == 3 && v8_minor >= 7)) {
-			V8_SCOPEINFO_IDX_FIRST_VARS = 4;
-		}
-	}
 
 	/*
 	 * With V8 version 4.3, a new "constructor_or_backpointer" field
@@ -1529,8 +1607,9 @@ conf_field_lookup(const char *klass, const char *field)
 			break;
 	}
 
-	if (clp == NULL)
+	if (clp == NULL) {
 		return (NULL);
+	}
 
 	for (flp = clp->v8c_fields; flp != NULL; flp = flp->v8f_next) {
 		if (strcmp(field, flp->v8f_name) == 0)
@@ -1651,8 +1730,9 @@ read_heap_ptr(uintptr_t *valp, uintptr_t addr, ssize_t off)
 int
 read_heap_smi(uintptr_t *valp, uintptr_t addr, ssize_t off)
 {
-	if (read_heap_ptr(valp, addr, off) != 0)
+	if (read_heap_ptr(valp, addr, off) != 0) {
 		return (-1);
+	}
 
 	if (!V8_IS_SMI(*valp)) {
 		v8_warn("expected SMI, got %p\n", *valp);
@@ -1925,8 +2005,9 @@ get_map_constructor(uintptr_t *valp, uintptr_t map) {
 	int constructor_found = 0;
 	uint8_t type;
 
-	if (V8_OFF_MAP_CONSTRUCTOR == -1)
+	if (V8_OFF_MAP_CONSTRUCTOR == -1) {
 		return (-1);
+	}
 
 	/*
 	 * https://codereview.chromium.org/950283002, which landed in V8 4.3.x,
@@ -1938,11 +2019,13 @@ get_map_constructor(uintptr_t *valp, uintptr_t map) {
 	 */
 	while (constructor_found == 0) {
 		if (read_heap_ptr(&constructor_candidate,
-		    map, V8_OFF_MAP_CONSTRUCTOR) != 0)
+		    map, V8_OFF_MAP_CONSTRUCTOR) != 0) {
 			return (-1);
+		}
 
-		if (read_typebyte(&type, constructor_candidate) != 0)
+		if (read_typebyte(&type, constructor_candidate) != 0) {
 			return (-1);
+		}
 
 		if (type != V8_TYPE_MAP) {
 			constructor_found = 1;
@@ -4932,21 +5015,28 @@ findjsobjects_constructor(findjsobjects_obj_t *obj)
 
 	v8_silent++;
 
-	if (read_heap_ptr(&map, addr, V8_OFF_HEAPOBJECT_MAP) != 0 ||
-	    get_map_constructor(&addr, map) != 0)
+	if (read_heap_ptr(&map, addr, V8_OFF_HEAPOBJECT_MAP) != 0) {
 		goto out;
+	}
+	if (get_map_constructor(&addr, map) != 0) {
+		goto out;
+	}
 
-	if (read_typebyte(&type, addr) != 0)
+	if (read_typebyte(&type, addr) != 0) {
 		goto out;
+	}
 
-	if (type != V8_TYPE_JSFUNCTION)
+	if (type != V8_TYPE_JSFUNCTION) {
 		goto out;
+	}
 
-	if (read_heap_ptr(&funcinfop, addr, V8_OFF_JSFUNCTION_SHARED) != 0)
+	if (read_heap_ptr(&funcinfop, addr, V8_OFF_JSFUNCTION_SHARED) != 0) {
 		goto out;
+	}
 
-	if (jsfunc_name(funcinfop, &bufp, &len) != 0)
+	if (jsfunc_name(funcinfop, &bufp, &len) != 0) {
 		goto out;
+	}
 out:
 	v8_silent--;
 }
