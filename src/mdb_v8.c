@@ -412,8 +412,12 @@ static v8_constant_t v8_constants[] = {
 	{ &V8_ISSHARED_SHIFT,		"v8dbg_isshared_shift",
 	    V8_CONSTANT_FALLBACK_A(V8V(3, 11)), 0 },
 	{ &V8_PROP_IDX_FIRST,		"v8dbg_prop_idx_first"		},
-	{ &V8_PROP_TYPE_FIELD,		"v8dbg_prop_type_field"		},
-	{ &V8_PROP_TYPE_MASK,		"v8dbg_prop_type_mask"		},
+	{ &V8_PROP_TYPE_FIELD,		"v8dbg_prop_type_field",
+	    V8_CONSTANT_REMOVED_SINCE(5, 7) },
+	{ &V8_PROP_TYPE_CONST_FIELD,	"v8dbg_prop_const_field",
+	    V8_CONSTANT_ADDED_SINCE(5, 2) },
+	{ &V8_PROP_TYPE_MASK,		"v8dbg_prop_type_mask",
+	    V8_CONSTANT_REMOVED_SINCE(5, 7) },
 	{ &V8_PROP_IDX_CONTENT,		"v8dbg_prop_idx_content",
 	    V8_CONSTANT_OPTIONAL },
 	{ &V8_PROP_DESC_KEY,		"v8dbg_prop_desc_key",
@@ -486,6 +490,197 @@ static v8_constant_t v8_constants[] = {
 	{ &V8_SCOPEINFO_IDX_FIRST_VARS, "v8dbg_scopeinfo_idx_first_vars",
 	    V8_CONSTANT_FALLBACK_A(V8V(4, 5)), 6 },
 };
+
+#if 0
+    In .git/config:
+
+    [remote "origin"]
+	url = https://chromium.googlesource.com/v8/v8.git
+	fetch = +refs/heads/*:refs/remotes/origin/*
+	fetch = +refs/branch-heads/*:refs/remotes/branch-heads/*
+
+    $ git fetch
+    $ git diff branch-heads/7.{5,6} -- tools/gen-postmortem-metadata.py
+#endif
+
+/*
+ * 5.1 -> 5.2
+ *
+ * Add:
+ *  prop_type_const_field
+ *
+ * 5.2 -> 5.3
+ *
+ * Add:
+ *  context_idx_closure
+ *  context_idx_native
+ *  context_idx_prev
+ *  context_idx_ext
+ *  context_min_slots
+ *  namedictionaryshape_prefix_size
+ *  namedictionaryshape_entry_size
+ *  namedictionary_prefix_start_index
+ *  seedednumberdictionaryshape_prefix_size
+ *  unseedednumberdictionaryshape_prefix_size
+ *  numberdictionaryshape_entry_size
+ *
+ * 5.3 -> 5.4
+ *
+ * Add:
+ *  globaldictionaryshape_entry_size
+ *  seedednumberdictionaryshape_entry_size
+ *  unseedednumberdictionaryshape_entry_size
+ *
+ * Remove:
+ *  numberdictionaryshape_entry_size
+ *
+ * 5.4 -> 5.5
+ *
+ * Remove:
+ *  scopeinfo_idx_ncontextglobals
+ *
+ * 5.6 -> 5.7
+ *
+ * Add:
+ *  APIObjectType
+ *  SpecialAPIObjectType
+ *  prop_kind_Data
+ *  prop_kind_Accessor
+ *  prop_kind_mask
+ *
+ * Remove:
+ *  prop_type_field
+ *  prop_type_const_field
+ *  prop_type_mask
+ *
+ * 5.7 -> 5.8
+ *
+ * Add:
+ *  off_fp_context_or_frame_type
+ *
+ * Note: these may have changed values:
+ *  prop_desc_key
+ *  prop_desc_details
+ *  prop_desc_value
+ *  prop_desc_size
+ *
+ * 5.9 -> 6.0
+ *
+ * Add:
+ *  prop_location_Descriptor
+ *  prop_location_Field
+ *  prop_location_mask
+ *  prop_location_shift
+ *  prop_attributes_NONE
+ *  prop_attributes_READ_ONLY
+ *  prop_attributes_DONT_ENUM
+ *  prop_attributes_DONT_DELETE
+ *  prop_attributes_mask
+ *  prop_attributes_shift
+ *
+ * 6.0 -> 6.1
+ *
+ * Note: these may have changed values:
+ *  elements_fast_holey_elements
+ *  elements_fast_elements
+ *  sharedfunctioninfo_start_position_mask
+ *  sharedfunctioninfo_start_position_shift
+ *
+ * 6.1 -> 6.2
+ *
+ * Add:
+ *  ThinStringTag
+ *
+ * 6.3 -> 6.4
+ *
+ * Add:
+ *  numberdictionaryshape_prefix_size
+ *  numberdictionaryshape_entry_size
+ *
+ * Remove:
+ *  seedednumberdictionaryshape_prefix_size
+ *  seedednumberdictionaryshape_entry_size
+ *  unseedednumberdictionaryshape_prefix_size
+ *  unseedednumberdictionaryshape_entry_size
+ *
+ * 6.4 -> 6.5
+ *
+ * Add:
+ *  bit_field3_is_dictionary_map_shift
+ *
+ * Remove:
+ *  bit_field3_dictionary_map_shift
+ *
+ * 6.5 -> 6.6
+ *
+ * Add:
+ *  simplenumberdictionaryshape_prefix_size
+ *  simplenumberdictionaryshape_entry_size
+ *
+ * 6.7 -> 6.8
+ *
+ * Add:
+ *  context_idx_scope_info
+ *
+ * Remove:
+ *  context_idx_closure
+ *
+ * 6.8 -> 6.9
+ *
+ * Add:
+ *  context_idx_embedder_data
+ *  type_JSError__JS_ERROR_TYPE
+ *
+ * Remove:
+ *  scopeinfo_idx_nstacklocals
+ *  sharedfunctioninfo_start_position_mask
+ *  sharedfunctioninfo_start_position_shift
+ *
+ * 6.9 -> 7.0
+ *
+ * Add:
+ *  FirstContextType
+ *  LastContextType
+ *
+ * 7.0 -> 7.1
+ *
+ * Changed:
+ *  jsarray_buffer_was_neutered_mask
+ *  jsarray_buffer_was_neutered_shift
+ *
+ * 7.1-> 7.2
+ *
+ * Add:
+ *  native_context_embedder_data_offset
+ *
+ * Remove:
+ *  prop_idx_first
+ *  context_idx_embedder_data
+ *
+ * 7.2 -> 7.3
+ *
+ * Add:
+ *  jsarray_buffer_was_detached_mask
+ *  jsarray_buffer_was_detached_shift
+ *  class_SharedFunctionInfo__function_data__Object
+ *
+ * Remove:
+ *  jsarray_buffer_was_neutered_mask
+ *  jsarray_buffer_was_neutered_shift
+ *
+ * 7.3 -> 7.4
+ *
+ * Remove:
+ *  PointerSizeLog2
+ *  prop_representation_integer8
+ *  prop_representation_uinteger8
+ *  prop_representation_integer16
+ *  prop_representation_uinteger16
+ *  prop_representation_integer32
+ *  prop_representation_external
+ *
+ * 7.4 -> 7.5
+ */
 
 static int v8_nconstants = sizeof (v8_constants) / sizeof (v8_constants[0]);
 
