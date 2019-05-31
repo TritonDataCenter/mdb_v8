@@ -495,15 +495,24 @@ static v8_constant_t v8_constants[] = {
 
 /*
  *
- *  In .git/config (but remove spaces between each / and *):
+ * In v8/.git/config (not mdb_v8) (but remove spaces between each / and *):
  *
- *  [remote "origin"]
+ *  [remote "chromium"]
  *	url = https://chromium.googlesource.com/v8/v8.git
- *	fetch = +refs/heads/ *:refs/remotes/origin/ *
  *	fetch = +refs/branch-heads/ *:refs/remotes/branch-heads/ *
  *
  *  $ git fetch
  *  $ git diff branch-heads/7.{5,6} -- tools/gen-postmortem-metadata.py
+ *
+ * Or:
+ *  $ git branch -a | grep branch-heads | cut -d/ -f 3 |
+ *     awk -F. 'NF == 2 {
+ *       if *  (prev != "") {
+ *         printf("git diff branch-heads/{%s,%s} -- %s\n"
+ *             prev, $0, "tools/gen-postmortem-metadata.py");
+ *       }
+ *       prev=$0;
+ *     }' | bash -x 2>&1 | less
  */
 
 /*
@@ -739,16 +748,18 @@ static v8_offset_t v8_offsets[] = {
 	    "JSFunction", "shared" },
 	{ &V8_OFF_JSOBJECT_ELEMENTS,
 	    "JSObject", "elements" },
+
 	/*
-	 * https://codereview.chromium.org/1575423002 which landed in V8 4.9.353
-	 * moved the properties from JSObject to JSReceiver.
+	 * https://chromium-review.googlesource.com/1238453 which landed in V8
+	 * 6.2 renamed properties to raw_properties_or_hash
 	 */
-	{ &V8_OFF_JSOBJECT_PROPERTIES,
-	    "JSObject", "properties",
-		V8_CONSTANT_REMOVED_SINCE(V8V(4, 9)) },
 	{ &V8_OFF_JSRECEIVER_PROPERTIES,
 	    "JSReceiver", "properties",
-		V8_CONSTANT_ADDED_SINCE(V8V(4, 9)) },
+	    V8_CONSTANT_ADD_REM_SINCE(V8V(4, 9) V8V(6, 2)) },
+	{ &V8_OFF_JSRECEIVER_PROPERTIES,
+	    "JSReceiver", "raw_properties_or_hash", B_FALSE,
+	    V8_CONSTANT_ADDED_SINCE(V8V(6, 2)) },
+
 	{ &V8_OFF_JSREGEXP_DATA,
 	    "JSRegExp", "data", V8_CONSTANT_OPTIONAL },
 	{ &V8_OFF_MAP_CONSTRUCTOR,
@@ -819,8 +830,22 @@ static v8_offset_t v8_offsets[] = {
 #endif
 	{ &V8_OFF_SHAREDFUNCTIONINFO_LENGTH,
 	    "SharedFunctionInfo", "length" },
+
+	/*
+	 * XXX-mg
+	 * https://chromium-review.googlesource.com/964201 landed in 6.7.100
+	 * renamed name to Name, but that's not what I'm looking for.
+	 *
+	 * https://chromium-review.googlesource.com/522073 landed in 6.1.80
+	 * renamed name to raw_name.
+	 */
 	{ &V8_OFF_SHAREDFUNCTIONINFO_NAME,
-	    "SharedFunctionInfo", "name" },
+	    "SharedFunctionInfo", "name",
+	    V8_CONSTANT_REMOVED_SINCE(6, 1) },
+	{ &V8_OFF_SHAREDFUNCTIONINFO_NAME,
+	    "SharedFunctionInfo", "raw_name",
+	    V8_CONSTANT_ADDED_SINCE(6, 1) },
+
 	{ &V8_OFF_SHAREDFUNCTIONINFO_SCOPE_INFO,
 	    "SharedFunctionInfo", "scope_info", V8_CONSTANT_OPTIONAL },
 	{ &V8_OFF_SHAREDFUNCTIONINFO_SCRIPT,
