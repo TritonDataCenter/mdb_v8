@@ -414,8 +414,10 @@ static v8_constant_t v8_constants[] = {
 	{ &V8_PROP_IDX_FIRST,		"v8dbg_prop_idx_first"		},
 	{ &V8_PROP_TYPE_FIELD,		"v8dbg_prop_type_field",
 	    V8_CONSTANT_REMOVED_SINCE(5, 7) },
+#if 0
 	{ &V8_PROP_TYPE_CONST_FIELD,	"v8dbg_prop_const_field",
 	    V8_CONSTANT_ADDED_SINCE(5, 2) },
+#endif
 	{ &V8_PROP_TYPE_MASK,		"v8dbg_prop_type_mask",
 	    V8_CONSTANT_REMOVED_SINCE(5, 7) },
 	{ &V8_PROP_IDX_CONTENT,		"v8dbg_prop_idx_content",
@@ -491,17 +493,18 @@ static v8_constant_t v8_constants[] = {
 	    V8_CONSTANT_FALLBACK_A(V8V(4, 5)), 6 },
 };
 
-#if 0
-    In .git/config:
-
-    [remote "origin"]
-	url = https://chromium.googlesource.com/v8/v8.git
-	fetch = +refs/heads/*:refs/remotes/origin/*
-	fetch = +refs/branch-heads/*:refs/remotes/branch-heads/*
-
-    $ git fetch
-    $ git diff branch-heads/7.{5,6} -- tools/gen-postmortem-metadata.py
-#endif
+/*
+ *
+ *  In .git/config (but remove spaces between each / and *):
+ *
+ *  [remote "origin"]
+ *	url = https://chromium.googlesource.com/v8/v8.git
+ *	fetch = +refs/heads/ *:refs/remotes/origin/ *
+ *	fetch = +refs/branch-heads/ *:refs/remotes/branch-heads/ *
+ *
+ *  $ git fetch
+ *  $ git diff branch-heads/7.{5,6} -- tools/gen-postmortem-metadata.py
+ */
 
 /*
  * 5.1 -> 5.2
