@@ -79,8 +79,14 @@
 #define	V8_DESC_VALIDX(x)		((x) << 1)
 #define	V8_DESC_DETIDX(x)		(((x) << 1) + 1)
 
+/* XXX-mg
+ * https://github.com/cjihrig/mdb_v8/commit/657728eaeef3c8e0d5ae32a03a16d7ab48da8d2b
 #define	V8_DESC_ISFIELD(x)		\
 	((V8_SMI_VALUE(x) & V8_PROP_TYPE_MASK) == V8_PROP_TYPE_FIELD)
+*/
+#define	V8_DESC_ISFIELD(x)		\
+	((V8_SMI_VALUE(x) & V8_PROP_LOCATION_MASK) == \
+	(V8_PROP_LOCATION_ENUM_KFIELD << V8_PROP_LOCATION_SHIFT))
 
 #define	V8_PROP_FIELDINDEX(value)	\
 	((V8_SMI_VALUE(value) & V8_PROPINDEX_MASK) >> V8_PROPINDEX_SHIFT)

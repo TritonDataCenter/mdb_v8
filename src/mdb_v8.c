@@ -144,6 +144,9 @@ static intptr_t	V8_PROP_DESC_KEY;
 static intptr_t	V8_PROP_DESC_DETAILS;
 static intptr_t	V8_PROP_DESC_VALUE;
 static intptr_t	V8_PROP_DESC_SIZE;
+static intptr_t	V8_PROP_LOCATION_MASK;
+static intptr_t	V8_PROP_LOCATION_ENUM_KFIELD;
+static intptr_t	V8_PROP_LOCATION_SHIFT;
 static intptr_t	V8_TRANSITIONS_IDX_DESC;
 
 intptr_t V8_TYPE_ACCESSORINFO = -1;
@@ -421,6 +424,12 @@ static v8_constant_t v8_constants[] = {
 #endif
 	{ &V8_PROP_TYPE_MASK,		"v8dbg_prop_type_mask",
 	    V8_CONSTANT_REMOVED_SINCE(V8V(5, 7)) },
+	{ &V8_PROP_LOCATION_MASK,	"v8dbg_prop_location_mask",
+	    V8_CONSTANT_ADDED_SINCE(V8V(5, 9)) },
+	{ &V8_PROP_LOCATION_ENUM_KFIELD, "v8dbg_prop_location_Field",
+	    V8_CONSTANT_ADDED_SINCE(V8V(5, 9)) },
+	{ &V8_PROP_LOCATION_ENUM_KFIELD, "v8dbg_prop_location_shift",
+	    V8_CONSTANT_ADDED_SINCE(V8V(5, 9)) },
 	{ &V8_PROP_IDX_CONTENT,		"v8dbg_prop_idx_content",
 	    V8_CONSTANT_OPTIONAL },
 	{ &V8_PROP_DESC_KEY,		"v8dbg_prop_desc_key",
