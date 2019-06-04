@@ -493,7 +493,6 @@ typedef struct v8_offset {
 	ssize_t		*v8o_valp;
 	const char	*v8o_class;
 	const char	*v8o_member;
-	boolean_t	v8o_optional;
 	v8_const_flag_t	v8o_flags;
 	v8_const_life_t	v8o_life;
 	intptr_t	v8o_fallback;
@@ -521,22 +520,22 @@ static v8_offset_t v8_offsets[] = {
 	{ &V8_OFF_JSARRAY_LENGTH,
 	    "JSArray", "length" },
 	{ &V8_OFF_JSDATE_VALUE,
-	    "JSDate", "value", B_TRUE },
+	    "JSDate", "value", V8_CONSTANT_OPTIONAL },
 
 	{ &V8_OFF_JSBOUNDFUNCTION_BOUND_ARGUMENTS,
-	    "JSBoundFunction", "bound_arguments", B_FALSE,
+	    "JSBoundFunction", "bound_arguments",
 	    V8_CONSTANT_ADDED_SINCE(V8V(4, 9)) },
 	{ &V8_OFF_JSBOUNDFUNCTION_BOUND_TARGET_FUNCTION,
-	    "JSBoundFunction", "bound_target_function", B_FALSE,
+	    "JSBoundFunction", "bound_target_function",
 	    V8_CONSTANT_ADDED_SINCE(V8V(4, 9)) },
 	{ &V8_OFF_JSBOUNDFUNCTION_BOUND_THIS,
-	    "JSBoundFunction", "bound_this", B_FALSE,
+	    "JSBoundFunction", "bound_this",
 	    V8_CONSTANT_ADDED_SINCE(V8V(4, 9)) },
 
 	{ &V8_OFF_JSFUNCTION_CONTEXT,
-	    "JSFunction", "context", B_TRUE },
+	    "JSFunction", "context", V8_CONSTANT_OPTIONAL },
 	{ &V8_OFF_JSFUNCTION_LITERALS_OR_BINDINGS,
-	    "JSFunction", "literals_or_bindings", B_FALSE,
+	    "JSFunction", "literals_or_bindings",
 	    V8_CONSTANT_REMOVED_SINCE(V8V(4, 9)) },
 	{ &V8_OFF_JSFUNCTION_SHARED,
 	    "JSFunction", "shared" },
@@ -547,45 +546,45 @@ static v8_offset_t v8_offsets[] = {
 	 * moved the properties from JSObject to JSReceiver.
 	 */
 	{ &V8_OFF_JSOBJECT_PROPERTIES,
-	    "JSObject", "properties", B_FALSE,
+	    "JSObject", "properties",
 		V8_CONSTANT_REMOVED_SINCE(V8V(4, 9)) },
 	{ &V8_OFF_JSRECEIVER_PROPERTIES,
-	    "JSReceiver", "properties", B_FALSE,
+	    "JSReceiver", "properties",
 		V8_CONSTANT_ADDED_SINCE(V8V(4, 9)) },
 	{ &V8_OFF_JSREGEXP_DATA,
-	    "JSRegExp", "data", B_TRUE },
+	    "JSRegExp", "data", V8_CONSTANT_OPTIONAL },
 	{ &V8_OFF_MAP_CONSTRUCTOR,
 	    "Map", "constructor",
-	    B_FALSE, V8_CONSTANT_REMOVED_SINCE(V8V(4, 3))},
+	    V8_CONSTANT_REMOVED_SINCE(V8V(4, 3))},
 	{ &V8_OFF_MAP_CONSTRUCTOR_OR_BACKPOINTER,
 	    "Map", "constructor_or_backpointer",
-	    B_FALSE, V8_CONSTANT_ADDED_SINCE(V8V(4, 3))},
+	    V8_CONSTANT_ADDED_SINCE(V8V(4, 3))},
 	{ &V8_OFF_MAP_INOBJECT_PROPERTIES,
 	    "Map", "inobject_properties",
-	    B_FALSE, V8_CONSTANT_REMOVED_SINCE(V8V(4, 6)) },
+	    V8_CONSTANT_REMOVED_SINCE(V8V(4, 6)) },
 #ifdef _LP64
 	{ &V8_OFF_MAP_INOBJECT_PROPERTIES_OR_CTOR_FUN_INDEX,
 	    "Map", "inobject_properties_or_constructor_function_index",
-	    B_FALSE, V8_CONSTANT_FALLBACK_A(V8V(4, 6)), 8 },
+	    V8_CONSTANT_FALLBACK_A(V8V(4, 6)), 8 },
 #else
 	{ &V8_OFF_MAP_INOBJECT_PROPERTIES_OR_CTOR_FUN_INDEX,
 	    "Map", "inobject_properties_or_constructor_function_index",
-	    B_FALSE, V8_CONSTANT_FALLBACK_A(V8V(4, 6)), 4 },
+	    V8_CONSTANT_FALLBACK_A(V8V(4, 6)), 4 },
 #endif
 	{ &V8_OFF_MAP_INSTANCE_ATTRIBUTES,
 	    "Map", "instance_attributes" },
 	{ &V8_OFF_MAP_INSTANCE_DESCRIPTORS,
-	    "Map", "instance_descriptors", B_TRUE },
+	    "Map", "instance_descriptors", V8_CONSTANT_OPTIONAL },
 	{ &V8_OFF_MAP_LAYOUT_DESCRIPTOR,
-	    "Map", "layout_descriptor", B_TRUE },
+	    "Map", "layout_descriptor", V8_CONSTANT_OPTIONAL },
 	{ &V8_OFF_MAP_TRANSITIONS,
-	    "Map", "transitions", B_TRUE },
+	    "Map", "transitions", V8_CONSTANT_OPTIONAL },
 	{ &V8_OFF_MAP_INSTANCE_SIZE,
 	    "Map", "instance_size" },
 	{ &V8_OFF_MAP_BIT_FIELD2,
-	    "Map", "bit_field2", B_TRUE },
+	    "Map", "bit_field2", V8_CONSTANT_OPTIONAL },
 	{ &V8_OFF_MAP_BIT_FIELD3,
-	    "Map", "bit_field3", B_TRUE },
+	    "Map", "bit_field3", V8_CONSTANT_OPTIONAL },
 	{ &V8_OFF_ODDBALL_TO_STRING,
 	    "Oddball", "to_string" },
 	{ &V8_OFF_SCRIPT_LINE_ENDS,
@@ -595,11 +594,11 @@ static v8_offset_t v8_offsets[] = {
 	{ &V8_OFF_SCRIPT_SOURCE,
 	    "Script", "source" },
 	{ &V8_OFF_SEQASCIISTR_CHARS,
-	    "SeqAsciiString", "chars", B_TRUE },
+	    "SeqAsciiString", "chars", V8_CONSTANT_OPTIONAL },
 	{ &V8_OFF_SEQONEBYTESTR_CHARS,
-	    "SeqOneByteString", "chars", B_TRUE },
+	    "SeqOneByteString", "chars", V8_CONSTANT_OPTIONAL },
 	{ &V8_OFF_SEQTWOBYTESTR_CHARS,
-	    "SeqTwoByteString", "chars", B_TRUE },
+	    "SeqTwoByteString", "chars", V8_CONSTANT_OPTIONAL },
 	{ &V8_OFF_SHAREDFUNCTIONINFO_CODE,
 	    "SharedFunctionInfo", "code" },
 	{ &V8_OFF_SHAREDFUNCTIONINFO_COMPILER_HINTS,
@@ -609,15 +608,15 @@ static v8_offset_t v8_offsets[] = {
 	{ &V8_OFF_SHAREDFUNCTIONINFO_FUNCTION_TOKEN_POSITION,
 	    "SharedFunctionInfo", "function_token_position" },
 	{ &V8_OFF_SHAREDFUNCTIONINFO_INFERRED_NAME,
-	    "SharedFunctionInfo", "inferred_name", B_FALSE,
+	    "SharedFunctionInfo", "inferred_name",
 		V8_CONSTANT_REMOVED_SINCE(V8V(5, 1)) },
 #ifdef _LP64
 	{ &V8_OFF_SHAREDFUNCTIONINFO_IDENTIFIER,
-	    "SharedFunctionInfo", "function_identifier", B_TRUE,
+	    "SharedFunctionInfo", "function_identifier",
 		V8_CONSTANT_FALLBACK_A(V8V(5, 1)), 79},
 #else
 	{ &V8_OFF_SHAREDFUNCTIONINFO_IDENTIFIER,
-	    "SharedFunctionInfo", "function_identifier", B_TRUE,
+	    "SharedFunctionInfo", "function_identifier",
 		V8_CONSTANT_FALLBACK_A(V8V(5, 1)), 39},
 #endif
 	{ &V8_OFF_SHAREDFUNCTIONINFO_LENGTH,
@@ -625,50 +624,50 @@ static v8_offset_t v8_offsets[] = {
 	{ &V8_OFF_SHAREDFUNCTIONINFO_NAME,
 	    "SharedFunctionInfo", "name" },
 	{ &V8_OFF_SHAREDFUNCTIONINFO_SCOPE_INFO,
-	    "SharedFunctionInfo", "scope_info", B_TRUE },
+	    "SharedFunctionInfo", "scope_info", V8_CONSTANT_OPTIONAL },
 	{ &V8_OFF_SHAREDFUNCTIONINFO_SCRIPT,
 	    "SharedFunctionInfo", "script" },
 	{ &V8_OFF_SLICEDSTRING_OFFSET,
 	    "SlicedString", "offset" },
 	{ &V8_OFF_SLICEDSTRING_PARENT,
-	    "SlicedString", "parent", B_TRUE },
+	    "SlicedString", "parent", V8_CONSTANT_OPTIONAL },
 	{ &V8_OFF_STRING_LENGTH,
 	    "String", "length" },
 #ifdef _LP64
 	{ &V8_OFF_JSTYPEDARRAY_LENGTH,
 	    "JSTypedArray", "length",
-	    B_FALSE, V8_CONSTANT_FALLBACK_A(V8V(4, 5)), 55 },
+	    V8_CONSTANT_FALLBACK_A(V8V(4, 5)), 55 },
 #else
 	{ &V8_OFF_JSTYPEDARRAY_LENGTH,
 	    "JSTypedArray", "length",
-	    B_FALSE, V8_CONSTANT_FALLBACK_A(V8V(4, 5)), 27 },
+	    V8_CONSTANT_FALLBACK_A(V8V(4, 5)), 27 },
 #endif
 #ifdef _LP64
 	{ &V8_OFF_JSARRAYBUFFER_BACKINGSTORE,
 	    "JSArrayBuffer", "backing_store",
-	    B_FALSE, V8_CONSTANT_FALLBACK_A(V8V(4, 6)), 23 },
+	    V8_CONSTANT_FALLBACK_A(V8V(4, 6)), 23 },
 #else
 	{ &V8_OFF_JSARRAYBUFFER_BACKINGSTORE,
 	    "JSArrayBuffer", "backing_store",
-	    B_FALSE, V8_CONSTANT_FALLBACK_A(V8V(4, 6)), 11 },
+	    V8_CONSTANT_FALLBACK_A(V8V(4, 6)), 11 },
 #endif
 #ifdef _LP64
 	{ &V8_OFF_JSARRAYBUFFERVIEW_BUFFER,
 	    "JSArrayBufferView", "buffer",
-	    B_FALSE, V8_CONSTANT_FALLBACK_A(V8V(3, 20)), 23 },
+	    V8_CONSTANT_FALLBACK_A(V8V(3, 20)), 23 },
 #else
 	{ &V8_OFF_JSARRAYBUFFERVIEW_BUFFER,
 	    "JSArrayBufferView", "buffer",
-	    B_FALSE, V8_CONSTANT_FALLBACK_A(V8V(3, 20)), 11 },
+	    V8_CONSTANT_FALLBACK_A(V8V(3, 20)), 11 },
 #endif
 #ifdef _LP64
 	{ &V8_OFF_JSARRAYBUFFERVIEW_CONTENT_OFFSET,
 	    "JSArrayBufferView", "byte_offset",
-	    B_FALSE, V8_CONSTANT_FALLBACK_A(V8V(4, 6)), 31 },
+	    V8_CONSTANT_FALLBACK_A(V8V(4, 6)), 31 },
 #else
 	{ &V8_OFF_JSARRAYBUFFERVIEW_CONTENT_OFFSET,
 	    "JSArrayBufferView", "byte_offset",
-	    B_FALSE, V8_CONSTANT_FALLBACK_A(V8V(4, 6)), 15 },
+	    V8_CONSTANT_FALLBACK_A(V8V(4, 6)), 15 },
 #endif
 };
 
@@ -1072,10 +1071,6 @@ again:
 			 */
 			klass = "FixedArrayBase";
 			goto again;
-		}
-
-		if (offp->v8o_optional) {
-			continue;
 		}
 
 		if ((offp->v8o_flags & V8_CONSTANT_OPTIONAL) == 0) {
