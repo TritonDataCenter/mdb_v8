@@ -413,13 +413,13 @@ static v8_constant_t v8_constants[] = {
 	    V8_CONSTANT_FALLBACK_A(V8V(3, 11)), 0 },
 	{ &V8_PROP_IDX_FIRST,		"v8dbg_prop_idx_first"		},
 	{ &V8_PROP_TYPE_FIELD,		"v8dbg_prop_type_field",
-	    V8_CONSTANT_REMOVED_SINCE(5, 7) },
+	    V8_CONSTANT_REMOVED_SINCE(V8V(5, 7)) },
 #if 0
 	{ &V8_PROP_TYPE_CONST_FIELD,	"v8dbg_prop_const_field",
-	    V8_CONSTANT_ADDED_SINCE(5, 2) },
+	    V8_CONSTANT_ADDED_SINCE(V8V(5, 2)) },
 #endif
 	{ &V8_PROP_TYPE_MASK,		"v8dbg_prop_type_mask",
-	    V8_CONSTANT_REMOVED_SINCE(5, 7) },
+	    V8_CONSTANT_REMOVED_SINCE(V8V(5, 7)) },
 	{ &V8_PROP_IDX_CONTENT,		"v8dbg_prop_idx_content",
 	    V8_CONSTANT_OPTIONAL },
 	{ &V8_PROP_DESC_KEY,		"v8dbg_prop_desc_key",
@@ -748,6 +748,9 @@ static v8_offset_t v8_offsets[] = {
 	    "JSFunction", "shared" },
 	{ &V8_OFF_JSOBJECT_ELEMENTS,
 	    "JSObject", "elements" },
+	{ &V8_OFF_JSOBJECT_PROPERTIES,
+	    "JSObject", "properties",
+            V8_CONSTANT_REMOVED_SINCE(V8V(4, 9)) },
 
 	/*
 	 * https://chromium-review.googlesource.com/1238453 which landed in V8
@@ -755,9 +758,9 @@ static v8_offset_t v8_offsets[] = {
 	 */
 	{ &V8_OFF_JSRECEIVER_PROPERTIES,
 	    "JSReceiver", "properties",
-	    V8_CONSTANT_ADD_REM_SINCE(V8V(4, 9) V8V(6, 2)) },
+	    V8_CONSTANT_ADD_REM_SINCE(V8V(4, 9), V8V(6, 2)) },
 	{ &V8_OFF_JSRECEIVER_PROPERTIES,
-	    "JSReceiver", "raw_properties_or_hash", B_FALSE,
+	    "JSReceiver", "raw_properties_or_hash",
 	    V8_CONSTANT_ADDED_SINCE(V8V(6, 2)) },
 
 	{ &V8_OFF_JSREGEXP_DATA,
@@ -841,10 +844,10 @@ static v8_offset_t v8_offsets[] = {
 	 */
 	{ &V8_OFF_SHAREDFUNCTIONINFO_NAME,
 	    "SharedFunctionInfo", "name",
-	    V8_CONSTANT_REMOVED_SINCE(6, 1) },
+	    V8_CONSTANT_REMOVED_SINCE(V8V(6, 1)) },
 	{ &V8_OFF_SHAREDFUNCTIONINFO_NAME,
 	    "SharedFunctionInfo", "raw_name",
-	    V8_CONSTANT_ADDED_SINCE(6, 1) },
+	    V8_CONSTANT_ADDED_SINCE(V8V(6, 1)) },
 
 	{ &V8_OFF_SHAREDFUNCTIONINFO_SCOPE_INFO,
 	    "SharedFunctionInfo", "scope_info", V8_CONSTANT_OPTIONAL },
