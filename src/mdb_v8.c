@@ -37,6 +37,7 @@
 #include "mdb_v8_dbg.h"
 #include "mdb_v8_dbi.h"
 
+#define	ARRAY_SIZE(a)	(sizeof (a) / sizeof (a[0]))
 #define	offsetof(s, m)	((size_t)(&(((s *)0)->m)))
 
 #ifndef MDBV8_VERS_TAG
@@ -82,7 +83,7 @@ static v8_class_t	*v8_classes;
 static v8_enum_t	v8_types[128];
 static int		v8_next_type;
 
-static v8_enum_t	v8_frametypes[19];
+static v8_enum_t	v8_frametypes[32];
 static int		v8_next_frametype;
 
 static int		v8_warnings;
@@ -694,7 +695,7 @@ static v8_constant_t v8_constants[] = {
  * 7.4 -> 7.5
  */
 
-static int v8_nconstants = sizeof (v8_constants) / sizeof (v8_constants[0]);
+static int v8_nconstants = ARRAY_SIZE(v8_constants);
 
 typedef struct v8_offset {
 	ssize_t		*v8o_valp;
@@ -897,7 +898,7 @@ static v8_offset_t v8_offsets[] = {
 #endif
 };
 
-static int v8_noffsets = sizeof (v8_offsets) / sizeof (v8_offsets[0]);
+static int v8_noffsets = ARRAY_SIZE(v8_offsets);
 
 static uint32_t v8_major;
 static uint32_t v8_minor;
@@ -1648,7 +1649,7 @@ conf_update_type(v8_cfg_t *cfgp, const char *symbol)
 	v8_enum_t *enp;
 	char buf[128];
 
-	if (v8_next_type > sizeof (v8_types) / sizeof (v8_types[0])) {
+	if (v8_next_type >= ARRAY_SIZE(v8_types)) {
 		mdb_warn("too many V8 types\n");
 		return (-1);
 	}
@@ -1673,8 +1674,7 @@ conf_update_frametype(v8_cfg_t *cfgp, const char *symbol)
 	const char *frametype;
 	v8_enum_t *enp;
 
-	if (v8_next_frametype >
-	    sizeof (v8_frametypes) / sizeof (v8_frametypes[0])) {
+	if (v8_next_frametype >= ARRAY_SIZE(v8_frametypes)) {
 		mdb_warn("too many V8 frame types\n");
 		return (-1);
 	}
