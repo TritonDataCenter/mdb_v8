@@ -157,3 +157,128 @@ regression tester.
 The "ignore" modules for past changes are committed to the repo for reference,
 though they likely wouldn't be reused except to reproduce the original testing
 work for the change.
+
+## Building node for debugging with gdb
+
+While working on this module, it may be helpful to be able to use gdb to look at
+C++ objects.  The node build needs three things:
+
+- gdb support
+- debug support
+- postmortem debugging symbols
+
+The first two come by way of flags to `configure`.  The last requires a bit of
+help in the form of this patch.
+
+```patch
+diff --git a/node.gypi b/node.gypi
+index 82953ee9ff..083f22cd40 100644
+--- a/node.gypi
++++ b/node.gypi
+@@ -102,6 +102,15 @@
+               '-Wl,-force_load,<(v8_base)',
+             ],
+           },
++          'conditions': [
++            ['OS!="aix" and node_shared=="false"', {
++              'ldflags': [
++                '-Wl,--whole-archive,<(obj_dir)/deps/v8/src/'
++                   '<(STATIC_LIB_PREFIX)v8_base<(STATIC_LIB_SUFFIX)',
++                '-Wl,--no-whole-archive',
++              ],
++            }],
++         ],
+         }],
+       ],
+     }],
+```
+
+These steps should get you on your way for Node v8.12.0 in a SmartOS 20181804
+zone.
+
+```
+$ export PATH=/opt/local/gcc8/bin:/opt/local/bin:$PATH
+$ pfexec pkgin -y install git gmake gcc8
+$ git clone git@github.com:mgerdts/node.git
+$ cd node
+$ git checkout v8.12.0-mgerdts
+$ ./configure --debug --gdb
+$ gmake -j 4
+```
+
+When that finishes you should have symlinks to two executables: `node`
+(release) and `node\_g` (debug).
+
+Once you do that you can poke around at the underlying C++ objects.
+
+```
+$ PS1='\n\u@\w $ '
+
+mgerdts@~/mdb_v8 $ ~/node/node_g
+>
+[1]+  Stopped                 ~/node/node_g
+
+mgerdts@~/mdb_v8 $ jobs -l
+[1]+ 372931 Stopped (user)          ~/node/node_g
+
+mgerdts@~/mdb_v8 $ mdb -L $(pwd)/build/amd64 -p 372931
+> ::load mdb_v8
+mdb_v8 version: 1.4.0 (dev)
+V8 version: 6.2.414.66
+Autoconfigured V8 support from target
+C++ symbol demangling enabled
+> ::findjsobjects
+          OBJECT #OBJECTS   #PROPS CONSTRUCTOR: PROPS
+    3bf37f139681        1        0 Domain
+    3bf37f1479c1        1        0 ReadFileContext
+...
+> ::gcore
+mdb: core.372931 dumped
+> ^Z
+
+[2]+  Stopped                 mdb -L $(pwd)/build/amd64 -p 372931
+```
+
+Now that we have the addresses of some objects, let's look at them from the C++
+side.  The magic here is to use `print *(v8::internal::JSObject *)0x` followed
+by the address of an object.
+
+```
+mgerdts@~/mdb_v8 $ gdb ~/node/node_g core.372931
+GNU gdb (GDB) 7.11
+...
+warning: Unexpected size of section `.reg2/1' in core file.
+#0  0xfffffbffef2161fa in kill () from /lib/64/libc.so.1
+[Current thread is 11 (Thread 1 (LWP 1))]
+(gdb) set print pretty on
+(gdb) print *(v8::internal::JSObject *)0x3bf37f139681
+$1 = {
+  <v8::internal::JSReceiver> = {
+    <v8::internal::HeapObject> = {
+      <v8::internal::Object> = {
+        static kHeaderSize = 0
+      },
+      members of v8::internal::HeapObject:
+      static kMapOffset = 0,
+      static kHeaderSize = 8
+    },
+    members of v8::internal::JSReceiver:
+    static kHashMask = 2147482624,
+    static kPropertiesOrHashOffset = 8,
+    static kHeaderSize = 16
+  },
+  members of v8::internal::JSObject:
+  static kMinAddedElementsCapacity = 16,
+  static kMaxElementCount = 4294967295,
+  static kMaxGap = 1024,
+  static kMaxUncheckedFastElementsLength = 5000,
+  static kMaxUncheckedOldFastElementsLength = 500,
+  static kInitialGlobalObjectUnusedPropertiesCount = 4,
+  static kMaxInstanceSize = 2040,
+  static kFieldsAdded = 3,
+  static kElementsOffset = 16,
+  static kHeaderSize = 24,
+  static kMaxInObjectProperties = 252
+}
+(gdb)
+...
