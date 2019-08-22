@@ -5,10 +5,15 @@
 -->
 
 <!--
-    Copyright (c) 2019, Joyent, Inc.
+    Copyright 2019 Joyent, Inc.
 -->
 
 # mdb_v8 changelog
+
+## v1.4.1 (2019-08)
+
+* OS-7960 need fixes for NULL as a pointer
+* #114 error: left shift of negative value
 
 ## v1.4.0 (2019-04)
 

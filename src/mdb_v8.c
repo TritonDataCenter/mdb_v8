@@ -3453,19 +3453,19 @@ jsobj_print_value(v8propvalue_t *valp, jsobj_print_t *jsop)
 		{ NULL }
 	}, *ent;
 
-	if (jsop->jsop_baseaddr != NULL && jsop->jsop_member == NULL)
+	if (jsop->jsop_baseaddr != (uintptr_t)NULL && jsop->jsop_member == NULL)
 		(void) bsnprintf(bufp, lenp, "%p: ", jsop->jsop_baseaddr);
 
 	if (jsop->jsop_printaddr && jsop->jsop_member == NULL)
 		(void) bsnprintf(bufp, lenp, "%p: ",
-		    valp == NULL ? NULL : valp->v8v_u.v8vu_addr);
+		    valp == NULL ? (uintptr_t)NULL : valp->v8v_u.v8vu_addr);
 
 	if (valp != NULL && valp->v8v_isboxeddouble) {
 		jsobj_print_double(bufp, lenp, valp->v8v_u.v8vu_double);
 		return (0);
 	}
 
-	addr = valp == NULL ? NULL : valp->v8v_u.v8vu_addr;
+	addr = valp == NULL ? (uintptr_t)NULL : valp->v8v_u.v8vu_addr;
 	if (V8_IS_SMI(addr)) {
 		(void) bsnprintf(bufp, lenp, "%d", V8_SMI_VALUE(addr));
 		return (0);
@@ -4632,7 +4632,7 @@ do_jsframe(uintptr_t fptr, uintptr_t raddr, jsframe_t *jsf)
 
 		if (mdb_vread(&argptr, sizeof (argptr),
 		    fptr + V8_OFF_FP_ARGS + nargs * sizeof (uintptr_t)) != -1 &&
-		    argptr != NULL) {
+		    argptr != (uintptr_t)NULL) {
 			(void) snprintf(arg, sizeof (arg), "this");
 			if (prop != NULL && strcmp(arg, prop) == 0) {
 				mdb_printf("%p\n", argptr);
@@ -5155,7 +5155,8 @@ findjsobjects_mapping(findjsobjects_state_t *fjs, const prmap_t *pmp,
 	if (name != NULL && !(fjs->fjs_brk && (pmp->pr_mflags & MA_BREAK)))
 		return (0);
 
-	if (fjs->fjs_addr != NULL && (fjs->fjs_addr < pmp->pr_vaddr ||
+	if (fjs->fjs_addr != (uintptr_t)NULL &&
+	    (fjs->fjs_addr < pmp->pr_vaddr ||
 	    fjs->fjs_addr >= pmp->pr_vaddr + pmp->pr_size))
 		return (0);
 
@@ -5309,7 +5310,7 @@ findjsobjects_references(findjsobjects_state_t *fjs)
 	}
 
 	v8_silent--;
-	fjs->fjs_addr = NULL;
+	fjs->fjs_addr = (uintptr_t)NULL;
 
 	/*
 	 * Now go over our referent(s), reporting any references that we have
@@ -6355,7 +6356,7 @@ dcmd_jsframe(uintptr_t addr, uint_t flags, int argc, const mdb_arg_t *argv)
 		return (DCMD_ERR);
 	}
 
-	if (fptr == NULL)
+	if (fptr == (uintptr_t)NULL)
 		return (DCMD_OK);
 
 	rv = do_jsframe(fptr, raddr, &jsf);
@@ -6478,7 +6479,7 @@ dcmd_jsprint(uintptr_t addr, uint_t flags, int argc, const mdb_arg_t *argv)
 
 		mdb_free(buf, bufsz);
 		jsop.jsop_found = B_FALSE;
-		jsop.jsop_baseaddr = NULL;
+		jsop.jsop_baseaddr = (uintptr_t)NULL;
 	} while (i < argc);
 
 	mdb_printf("\n");
@@ -7106,7 +7107,7 @@ walk_jselement_init(mdb_walk_state_t *wsp)
 	int memflags = UM_GC | UM_SLEEP;
 	jselement_walk_data_t *jsew;
 
-	if ((addr = wsp->walk_addr) == NULL) {
+	if ((addr = wsp->walk_addr) == (uintptr_t)NULL) {
 		mdb_warn("'jselement' does not support global walks\n");
 		return (WALK_ERR);
 	}
@@ -7172,7 +7173,7 @@ walk_jselement_fini(mdb_walk_state_t *wsp)
 static int
 walk_jsframes_init(mdb_walk_state_t *wsp)
 {
-	if (wsp->walk_addr != NULL)
+	if (wsp->walk_addr != (uintptr_t)NULL)
 		return (WALK_NEXT);
 
 	if (load_current_context(&wsp->walk_addr, NULL) != 0)
@@ -7196,7 +7197,7 @@ walk_jsframes_step(mdb_walk_state_t *wsp)
 	if (mdb_vread(&next, sizeof (next), addr) == -1)
 		return (WALK_ERR);
 
-	if (next == NULL)
+	if (next == (uintptr_t)NULL)
 		return (WALK_DONE);
 
 	wsp->walk_addr = next;
@@ -7249,7 +7250,7 @@ walk_jsprop_init(mdb_walk_state_t *wsp)
 	uintptr_t addr;
 	uint8_t type;
 
-	if ((addr = wsp->walk_addr) == NULL) {
+	if ((addr = wsp->walk_addr) == (uintptr_t)NULL) {
 		mdb_warn("'jsprop' does not support global walks\n");
 		return (WALK_ERR);
 	}

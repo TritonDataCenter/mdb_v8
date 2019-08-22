@@ -327,7 +327,8 @@ v8funcinfo_load(uintptr_t funcinfo, int memflags)
 	fip->v8fi_script = script;
 	fip->v8fi_scriptpath = scriptpath;
 	fip->v8fi_tokenpos = tokenpos;
-	fip->v8fi_line_endings = jsobj_is_undefined(lineends) ? NULL : lineends;
+	fip->v8fi_line_endings = jsobj_is_undefined(lineends) ?
+	    (uintptr_t)NULL : lineends;
 	fip->v8fi_code = code;
 	return (fip);
 }
@@ -379,7 +380,7 @@ v8funcinfo_funcname(v8funcinfo_t *fip, mdbv8_strbuf_t *strb,
 	 * If that failed or was empty, then we printed a generic name, but try
 	 * now to append the inferred name.
 	 */
-	if (fip->v8fi_inferred_name != NULL) {
+	if (fip->v8fi_inferred_name != (uintptr_t)NULL) {
 		strp = v8string_load(fip->v8fi_inferred_name, UM_SLEEP);
 		if (strp != NULL) {
 			mdbv8_strbuf_sprintf(strb, " (as ");
@@ -452,7 +453,7 @@ v8funcinfo_definition_location(v8funcinfo_t *fip, mdbv8_strbuf_t *strb,
 	 * print out the position itself (which is basically a character offset
 	 * into the script).
 	 */
-	if (fip->v8fi_line_endings == NULL) {
+	if (fip->v8fi_line_endings == (uintptr_t)NULL) {
 		if (tokpos == V8_VALUE_SMI((uintptr_t)-1)) {
 			mdbv8_strbuf_sprintf(strb, "unknown position");
 		} else {
