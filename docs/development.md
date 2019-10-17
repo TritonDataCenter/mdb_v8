@@ -16,9 +16,7 @@ Contributions are welcome, but please help us review your changes (and keep code
 quality high) by following these guidelines.  **If you have any questions, feel
 free to ask.**  Don't let these guidelines be a barrier to contributing!
 
-**This repository does not use GitHub pull requests.**  Changes should be
-submitted through
-[cr.joyent.us](https://github.com/joyent/joyent-gerrit/tree/master/docs/user).
+**Code review:** Changes should be as GitHub pull requests.
 
 **Use of GitHub issues:** There should be at least one GitHub issue filed for
 your change (even trivial changes).  This issue should explain the change, the
@@ -40,12 +38,6 @@ the usage guide.
 
 **Testing**: All changes should be `make prepush` clean, but additional testing
 is probably necessary for most changes.  See below.
-
-Once you've got a change ready to integrate, you can submit it to cr.joyent.us
-using the [cr.joyent.us user
-instructions](https://github.com/joyent/joyent-gerrit/tree/master/docs/user).
-Feel free to reach out to past contributors to ask them to review your change.
-Review and integration happen through the cr.joyent.us interface.
 
 
 ## Testing
