@@ -5,10 +5,14 @@
 -->
 
 <!--
-    Copyright 2019 Joyent, Inc.
+    Copyright 2020 Joyent, Inc.
 -->
 
 # mdb_v8 changelog
+
+## v1.4.2 (2020-05)
+
+* #123 fix compilation with GCC9
 
 ## v1.4.1 (2019-08)
 
