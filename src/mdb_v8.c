@@ -5,7 +5,7 @@
  */
 
 /*
- * Copyright 2019 Joyent, Inc.
+ * Copyright 2020 Joyent, Inc.
  */
 
 /*
@@ -2557,7 +2557,7 @@ jsobj_properties(uintptr_t addr,
 		if (kind == V8_ELEMENTS_FAST_ELEMENTS ||
 		    kind == V8_ELEMENTS_FAST_HOLEY_ELEMENTS) {
 			for (ii = 0; ii < len; ii++) {
-				char name[10];
+				char name[21];
 
 				if (kind == V8_ELEMENTS_FAST_HOLEY_ELEMENTS &&
 				    jsobj_is_hole(elts[ii]))
