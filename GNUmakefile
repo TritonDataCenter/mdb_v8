@@ -78,6 +78,7 @@ CFLAGS			+= -Wno-unknown-pragmas
 
 # Linker flags (including dependent libraries)
 LDFLAGS			+= -lproc
+LDFLAGS.64		+= -lproc
 SOFLAGS			 = -Wl,-soname=$(MDBV8_SONAME)
 
 # Path to cstyle.pl tool
@@ -121,7 +122,8 @@ $(MDBV8_TARGETS_ia32):	SOFLAGS += -m32
 #
 MKDIRP		 = mkdir -p $@
 COMPILE.c	 = $(CC) -o $@ -c $(CFLAGS) $(CPPFLAGS) $^
-MAKESO	 	 = $(CC) -o $@ -shared $(SOFLAGS) $(LDFLAGS) $^
+MAKESO_ia32 	 = $(CC) -o $@ -shared $(SOFLAGS) $(LDFLAGS) $^
+MAKESO_amd64 	 = $(CC) -o $@ -shared $(SOFLAGS) $(LDFLAGS.64) $^
 GITDESCRIBE	 = $(shell git describe --all --long --dirty | \
     awk -F'-g' '{print $$NF}')
 

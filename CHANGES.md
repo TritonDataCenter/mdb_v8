@@ -10,6 +10,11 @@
 
 # mdb_v8 changelog
 
+## v1.4.3 (2021-12)
+
+* OS-8326 Let smartos-live be buildable with gcc10
+* #126 fix compilation with GCC10
+
 ## v1.4.2 (2020-05)
 
 * #123 fix compilation with GCC9
