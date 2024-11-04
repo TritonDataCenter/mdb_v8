@@ -4628,7 +4628,7 @@ do_jsframe(uintptr_t fptr, uintptr_t raddr, jsframe_t *jsf)
 	if (read_heap_maybesmi(&nargs, funcinfop,
 	    V8_OFF_SHAREDFUNCTIONINFO_LENGTH) == 0) {
 		uintptr_t argptr;
-		char arg[10];
+		char arg[25];
 
 		if (mdb_vread(&argptr, sizeof (argptr),
 		    fptr + V8_OFF_FP_ARGS + nargs * sizeof (uintptr_t)) != -1 &&
