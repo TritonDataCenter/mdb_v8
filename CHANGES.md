@@ -6,9 +6,14 @@
 
 <!--
     Copyright 2020 Joyent, Inc.
+    Copyright 2024 MNX Cloud, Inc.
 -->
 
 # mdb_v8 changelog
+
+## 1.4.4 (2024-11)
+
+* OS-8594 mdb_v8 update for gcc 14
 
 ## v1.4.3 (2021-12)
 
